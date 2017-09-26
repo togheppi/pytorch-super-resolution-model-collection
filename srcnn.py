@@ -10,32 +10,25 @@ from logger import Logger
 
 
 class Net(torch.nn.Module):
-    def __init__(self, num_channels, base_filter, num_residuals):
+    def __init__(self, num_channels, base_filter):
         super(Net, self).__init__()
 
-        self.input_conv = ConvBlock(num_channels, base_filter, 3, 1, 1, norm=None, bias=False)
-
-        conv_blocks = []
-        for _ in range(num_residuals):
-            conv_blocks.append(ConvBlock(base_filter, base_filter, 3, 1, 1, norm=None, bias=False))
-        self.residual_layers = nn.Sequential(*conv_blocks)
-
-        self.output_conv = ConvBlock(base_filter, num_channels, 3, 1, 1, activation=None, norm=None, bias=False)
+        self.layers = torch.nn.Sequential(
+            ConvBlock(num_channels, base_filter, 9, 1, 4, norm=None),
+            ConvBlock(base_filter, base_filter // 2, 1, 1, 0, norm=None),
+            ConvBlock(base_filter // 2, num_channels, 5, 1, 2, activation=None, norm=None),
+        )
 
     def forward(self, x):
-        residual = x
-        out = self.input_conv(x)
-        out = self.residual_layers(out)
-        out = self.output_conv(out)
-        out = torch.add(out, residual)
+        out = self.layers(x)
         return out
 
-    def weight_init(self):
+    def weight_init(self, mean=0.0, std=0.001):
         for m in self.modules():
-            utils.weights_init_kaming(m)
+            utils.weights_init_normal(m, mean=mean, std=std)
 
 
-class VDSR(object):
+class SRCNN(object):
     def __init__(self, args):
         # parameters
         self.model_name = args.model_name
@@ -52,17 +45,13 @@ class VDSR(object):
         self.gpu_mode = args.gpu_mode
 
         # networks
-        self.model = Net(num_channels=self.num_channels, base_filter=64, num_residuals=18)
+        self.model = Net(num_channels=self.num_channels, base_filter=64)
 
         # weigh initialization
-        self.model.weight_init()
+        self.model.weight_init(mean=0.0, std=0.001)
 
         # optimizer
-        self.momentum = 0.9
-        self.weight_decay = 0.0001
-        self.clip = 0.4
-        self.optimizer = optim.SGD(self.model.parameters(),
-                                   lr=self.lr, momentum=self.momentum, weight_decay=self.weight_decay)
+        self.optimizer = optim.SGD(self.model.parameters(), lr=self.lr)
 
         # loss function
         if self.gpu_mode:
@@ -82,10 +71,8 @@ class VDSR(object):
             return DataLoader(dataset=train_set, num_workers=self.num_threads, batch_size=self.batch_size, shuffle=True)
         elif dataset == 'test':
             test_set = get_test_set(self.data_dir, self.dataset, self.scale_factor, interpolation='bicubic')
-            return DataLoader(dataset=test_set, num_workers=self.num_threads, batch_size=self.test_batch_size,
-                              shuffle=False)
-
-
+            return DataLoader(dataset=test_set, num_workers=self.num_threads, batch_size=self.test_batch_size, shuffle=False)
+        
     def train(self):
         # load dataset
         train_data_loader = self.load_dataset(dataset='train')
@@ -103,12 +90,6 @@ class VDSR(object):
         self.model.train()
         for epoch in range(self.num_epochs):
 
-            # learning rate is decayed by a factor of 10 every 20 epochs
-            if (epoch+1) % 20 == 0:
-                for param_group in self.optimizer.param_groups:
-                    param_group["lr"] /= 10.0
-                print("Learning rate decay: lr={}".format(self.optimizer.param_groups[0]["lr"]))
-
             epoch_loss = 0
             for iter, (input, target) in enumerate(train_data_loader):
                 # input data
@@ -124,13 +105,11 @@ class VDSR(object):
                 self.pred = self.model(y_)
                 loss = self.MSE_loss(self.pred, x_)
                 loss.backward()
-                nn.utils.clip_grad_norm(self.model.parameters(), self.clip)
                 self.optimizer.step()
 
                 # log
                 epoch_loss += loss.data[0]
-                print("Epoch: [%2d] [%4d/%4d] loss: %.8f" % (
-                (epoch + 1), (iter + 1), len(train_data_loader), loss.data[0]))
+                print("Epoch: [%2d] [%4d/%4d] loss: %.8f" % ((epoch + 1), (iter + 1), len(train_data_loader), loss.data[0]))
 
                 # tensorboard logging
                 logger.scalar_summary('loss', loss.data[0], step + 1)
