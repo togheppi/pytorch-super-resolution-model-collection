@@ -15,7 +15,7 @@ class Net(torch.nn.Module):
 
         self.layers = torch.nn.Sequential(
             ConvBlock(num_channels, base_filter, 9, 1, 4, norm=None),
-            ConvBlock(base_filter, base_filter // 2, 1, 1, 0, norm=None),
+            ConvBlock(base_filter, base_filter // 2, 1, 1, 1, norm=None),
             ConvBlock(base_filter // 2, num_channels, 5, 1, 2, activation=None, norm=None),
         )
 
@@ -157,8 +157,8 @@ class SRCNN(object):
             recon_imgs = utils.to_np(self.pred)
             for i, recon_img in enumerate(recon_imgs):
                 img_num += 1
-                gt_img = target[i].numpy()
-                bc_img = input[i].numpy()
+                gt_img = utils.to_np(x_)
+                bc_img = utils.to_np(y_)
 
                 # calculate psnrs
                 bc_psnr = utils.PSNR(bc_img, gt_img)

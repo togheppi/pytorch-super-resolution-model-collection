@@ -2,13 +2,14 @@ import torch
 import os, argparse
 from srcnn import SRCNN
 from vdsr import VDSR
+from srresnet import SRResNet, SRGAN
 
 """parsing and configuration"""
 def parse_args():
     desc = "Pytorch implementation of SR collections"
     parser = argparse.ArgumentParser(description=desc)
 
-    parser.add_argument('--model_name', type=str, default='VDSR',
+    parser.add_argument('--model_name', type=str, default='SRResNet',
                         choices=['SRCNN', 'VDSR', 'DRCN', 'ESPCN', 'FastNeuralStyle', 'FSRCNN', 'SRResNet', 'LapSRN', 'EnhanceNet', 'EDSR', 'EnhanceGAN'], help='The type of model')
     parser.add_argument('--data_dir', type=str, default='../Data')
     parser.add_argument('--dataset', type=str, default='bsds300', choices=['bsds300', 'fashion-mnist', 'celebA'],
@@ -17,10 +18,10 @@ def parse_args():
     parser.add_argument('--num_channels', type=int, default=1, help='The number of channels to super-resolve')
     parser.add_argument('--scale_factor', type=int, default=2, help='Size of scale factor')
     parser.add_argument('--num_epochs', type=int, default=80, help='The number of epochs to run')
-    parser.add_argument('--batch_size', type=int, default=64, help='training batch size')
+    parser.add_argument('--batch_size', type=int, default=16, help='training batch size')
     parser.add_argument('--test_batch_size', type=int, default=10, help='testing batch size')
     parser.add_argument('--save_dir', type=str, default='Result', help='Directory name to save the results')
-    parser.add_argument('--lr', type=float, default=0.1)
+    parser.add_argument('--lr', type=float, default=0.0001)
     parser.add_argument('--gpu_mode', type=bool, default=True)
 
     return check_args(parser.parse_args())
@@ -69,8 +70,8 @@ def main():
     #     net = FastNeuralStyle(args)
     # elif args.model_name == 'FSRCNN':
     #     net = FSRCNN(args)
-    # elif args.model_name == 'SRResNet':
-    #     net = SRResNet(args)
+    elif args.model_name == 'SRResNet':
+        net = SRGAN(args)
     # elif args.model_name == 'LapSRN':
     #     net = LapSRN(args)
     # elif args.model_name == 'EnhanceNet':
