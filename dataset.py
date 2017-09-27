@@ -10,17 +10,21 @@ def is_image_file(filename):
     return any(filename.endswith(extension) for extension in [".png", ".jpg", ".jpeg"])
 
 
-def load_img(filepath):
-    img = Image.open(filepath).convert('YCbCr')
-    y, _, _ = img.split()
-    return y
+def load_img(filepath, is_rgb=False):
+    if is_rgb:
+        img = Image.open(filepath).convert('RGB')
+        return img
+    else:
+        img = Image.open(filepath).convert('YCbCr')
+        y, _, _ = img.split()
+        return y
 
 
 class DatasetFromFolder(data.Dataset):
-    def __init__(self, image_dir, crop_size=None, fliplr=False, input_transform=None, target_transform=None):
+    def __init__(self, image_dir, is_rgb=False, crop_size=None, fliplr=False, input_transform=None, target_transform=None):
         super(DatasetFromFolder, self).__init__()
         self.image_filenames = [join(image_dir, x) for x in listdir(image_dir) if is_image_file(x)]
-
+        self.is_rgb = is_rgb
         self.crop_size = crop_size
         self.fliplr = fliplr
 
@@ -28,7 +32,7 @@ class DatasetFromFolder(data.Dataset):
         self.target_transform = target_transform
 
     def __getitem__(self, index):
-        input = load_img(self.image_filenames[index])
+        input = load_img(self.image_filenames[index], self.is_rgb)
         target = input.copy()
 
         if self.crop_size:

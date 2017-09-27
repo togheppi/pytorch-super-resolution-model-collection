@@ -14,9 +14,9 @@ class Net(torch.nn.Module):
         super(Net, self).__init__()
 
         self.layers = torch.nn.Sequential(
-            ConvBlock(num_channels, base_filter, 9, 1, 4, norm=None),
-            ConvBlock(base_filter, base_filter // 2, 1, 1, 1, norm=None),
-            ConvBlock(base_filter // 2, num_channels, 5, 1, 2, activation=None, norm=None),
+            ConvBlock(num_channels, base_filter, 9, 1, 0, norm=None),
+            ConvBlock(base_filter, base_filter // 2, 1, 1, 0, norm=None),
+            ConvBlock(base_filter // 2, num_channels, 5, 1, 0, activation=None, norm=None),
         )
 
     def forward(self, x):
@@ -72,7 +72,7 @@ class SRCNN(object):
         elif dataset == 'test':
             test_set = get_test_set(self.data_dir, self.dataset, self.scale_factor, interpolation='bicubic')
             return DataLoader(dataset=test_set, num_workers=self.num_threads, batch_size=self.test_batch_size, shuffle=False)
-        
+
     def train(self):
         # load dataset
         train_data_loader = self.load_dataset(dataset='train')
@@ -103,7 +103,11 @@ class SRCNN(object):
                 # update network
                 self.optimizer.zero_grad()
                 self.pred = self.model(y_)
-                loss = self.MSE_loss(self.pred, x_)
+
+                # exclude border pixels from loss computation
+                padding = 6
+                x_crop = utils.to_var(utils.to_np(x_)[:, :, padding:-padding, padding:-padding])
+                loss = self.MSE_loss(self.pred, x_crop)
                 loss.backward()
                 self.optimizer.step()
 
@@ -154,11 +158,12 @@ class SRCNN(object):
 
             # prediction
             self.pred = self.model(y_)
+            padding = 6
             recon_imgs = utils.to_np(self.pred)
             for i, recon_img in enumerate(recon_imgs):
                 img_num += 1
-                gt_img = utils.to_np(x_)
-                bc_img = utils.to_np(y_)
+                gt_img = target[i].numpy()[:, padding:-padding, padding:-padding]
+                bc_img = input[i].numpy()[:, padding:-padding, padding:-padding]
 
                 # calculate psnrs
                 bc_psnr = utils.PSNR(bc_img, gt_img)
@@ -178,7 +183,7 @@ class SRCNN(object):
 
                 print("Saving %d test result images..." % img_num)
 
-            psnr = utils.PSNR(recon_imgs, utils.to_np(x_))
+            psnr = utils.PSNR(recon_imgs, target.numpy()[:, :, padding:-padding, padding:-padding])
             avg_psnr += psnr
 
         print("Avg. PSNR: {:.4f} dB".format(avg_psnr / len(test_data_loader)))

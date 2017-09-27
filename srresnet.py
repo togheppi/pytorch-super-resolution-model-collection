@@ -9,6 +9,7 @@ from torch.utils.data import DataLoader
 from data import get_training_set, get_test_set
 import utils
 from logger import Logger
+from PIL import Image
 
 
 class Generator(torch.nn.Module):
@@ -65,7 +66,7 @@ class Discriminator(torch.nn.Module):
 
         self.dense_layers = nn.Sequential(
             DenseBlock(base_filter * 8 * image_size // 16 * image_size // 16, base_filter * 16, activation='lrelu', norm=None),
-            DenseBlock(base_filter * 16, num_channels, activation='sigmoid', norm=None)
+            DenseBlock(base_filter * 16, 1, activation='sigmoid', norm=None)
         )
 
     def forward(self, x):
@@ -225,7 +226,7 @@ class SRResNet(object):
                 bc_img = utils.to_np(y_)
 
                 # calculate psnrs
-                bc_psnr = utils.PSNR(bc_img, gt_img)
+                # bc_psnr = utils.PSNR(bc_img, gt_img)
                 recon_psnr = utils.PSNR(recon_img, gt_img)
 
                 result_dir = os.path.join(self.save_dir, 'result')
@@ -237,7 +238,7 @@ class SRResNet(object):
 
                 # save result images
                 result_imgs = [gt_img, bc_img, recon_img]
-                psnrs = [None, bc_psnr, recon_psnr]
+                psnrs = [None, 0, recon_psnr]
                 utils.plot_test_result(result_imgs, psnrs, img_num, save=True, save_dir=result_dir,
                                        show_label=True)
 
@@ -290,12 +291,11 @@ class SRGAN(object):
     def load_dataset(self, dataset='train'):
         print('Loading datasets...')
         if dataset == 'train':
-            train_set = get_training_set(self.data_dir, self.dataset, self.scale_factor,
-                                         interpolation='bicubic')
+            train_set = get_training_set(self.data_dir, self.dataset, self.scale_factor, is_rgb=True)
             return DataLoader(dataset=train_set, num_workers=self.num_threads, batch_size=self.batch_size,
                               shuffle=True)
         elif dataset == 'test':
-            test_set = get_test_set(self.data_dir, self.dataset, self.scale_factor, interpolation='bicubic')
+            test_set = get_test_set(self.data_dir, self.dataset, self.scale_factor, is_rgb=True)
             return DataLoader(dataset=test_set, num_workers=self.num_threads,
                               batch_size=self.test_batch_size,
                               shuffle=False)
@@ -346,27 +346,68 @@ class SRGAN(object):
             os.mkdir(D_log_dir)
         D_logger = Logger(D_log_dir)
 
-        img_log_dir = os.path.join(self.save_dir, 'img_logs')
-        if not os.path.exists(img_log_dir):
-            os.mkdir(img_log_dir)
-        img_logger = Logger(img_log_dir)
+        ################# Pre-train generator #################
+        print('Pre-training is started.')
+        self.G.train()
+        for epoch in range(self.num_epochs):
+            for iter, (input, target) in enumerate(train_data_loader):
+                # input data
+                if self.gpu_mode:
+                    x_ = Variable(target.cuda())
+                    y_ = Variable(input.cuda())
+                else:
+                    x_ = Variable(target)
+                    y_ = Variable(input)
 
-        # Train
+                # Train generator
+                self.G_optimizer.zero_grad()
+
+                recon_image = self.G(y_)
+
+                # Content losses
+                content_loss = self.MSE_loss(recon_image, x_)
+
+                # Back propagation
+                G_loss_pretrain = content_loss
+                G_loss_pretrain.backward()
+                self.G_optimizer.step()
+
+                # log
+                print("Epoch: [%2d] [%4d/%4d] G_loss_pretrain: %.8f"
+                      % ((epoch + 1), (iter + 1), len(train_data_loader), G_loss_pretrain.data[0]))
+
+        print('Pre-training is finished.')
+
+        # Save pre-trained parameters of generator
+        model_dir = os.path.join(self.save_dir, 'model')
+        if not os.path.exists(model_dir):
+            os.mkdir(model_dir)
+
+        torch.save(self.G.state_dict(), model_dir + '/' + self.model_name + '_G_param_pretrain.pkl')
+
+        ################# Adversarial train #################
         print('Training is started.')
         # Avg. losses
-        D_avg_loss = []
         G_avg_loss = []
+        D_avg_loss = []
         step = 0
 
-        # test image for training
-        test_input, test_target = train_data_loader.__iter__().__next__()
-
+        self.G.train()
         self.D.train()
         for epoch in range(self.num_epochs):
 
+            # learning rate is decayed by a factor of 10 every 500 iterations
+            if (step + 1) % 500 == 0:
+                for param_group in self.G_optimizer.param_groups:
+                    param_group["lr"] /= 10.0
+                print("Learning rate decay: lr={}".format(self.G_optimizer.param_groups[0]["lr"]))
+                for param_group in self.D_optimizer.param_groups:
+                    param_group["lr"] /= 10.0
+                print("Learning rate decay: lr={}".format(self.D_optimizer.param_groups[0]["lr"]))
+
             G_epoch_loss = 0
             D_epoch_loss = 0
-            self.G.train()
+
             for iter, (input, target) in enumerate(train_data_loader):
                 # input data
                 mini_batch = target.size()[0]
@@ -409,12 +450,13 @@ class SRGAN(object):
                 GAN_loss = self.BCE_loss(D_fake_decision, real_label)
 
                 # Content losses
-                real_feature = self.feature_extractor(x_)
+                mse_loss = self.MSE_loss(recon_image, x_)
+                real_feature = Variable(self.feature_extractor(x_).data.cuda(), requires_grad=False)
                 fake_feature = self.feature_extractor(recon_image)
-                content_loss = self.MSE_loss(real_feature, fake_feature)
+                vgg_loss = self.MSE_loss(fake_feature, real_feature)
 
                 # Back propagation
-                G_loss = 0.006 * content_loss + GAN_loss
+                G_loss = mse_loss + vgg_loss + GAN_loss
                 G_loss.backward()
                 self.G_optimizer.step()
 
@@ -433,39 +475,11 @@ class SRGAN(object):
             G_avg_loss.append(G_epoch_loss / len(train_data_loader))
             D_avg_loss.append(D_epoch_loss / len(train_data_loader))
 
-            # generate fake images with fixed noise
-            self.G.eval()
-            test_recon_img = utils.to_np(self.G(Variable(test_input.cuda(), volatile=True)))
-            gt_img = test_target.numpy()
-            bc_img = test_input.numpy()
-
-            # calculate psnrs
-            bc_psnr = utils.PSNR(bc_img, gt_img)
-            recon_psnr = utils.PSNR(test_recon_img, gt_img)
-
-            result_dir = os.path.join(self.save_dir, 'result')
-            if not os.path.exists(result_dir):
-                os.mkdir(result_dir)
-
-            # save result images
-            result_imgs = [gt_img, bc_img, test_recon_img]
-            psnrs = [None, bc_psnr, recon_psnr]
-            utils.plot_test_result(result_imgs, psnrs, epoch, save=True, save_dir=result_dir,
-                                   show_label=True)
-
-            # log the images
-            info = {
-                'Reconstructed images': utils.to_np(test_recon_img).transpose(0, 2, 3, 1),  # convert to BxHxWxC
-            }
-
-            for tag, images in info.items():
-                img_logger.image_summary(tag, images, epoch + 1)
-
-        # Plot avg. loss
-        # result_dir = os.path.join(self.save_dir, 'result')
-        # if not os.path.exists(result_dir):
-        #     os.mkdir(result_dir)
-        # utils.plot_loss(avg_loss, self.num_epochs, save=True, save_dir=result_dir)
+         # Plot avg. loss
+        result_dir = os.path.join(self.save_dir, 'result')
+        if not os.path.exists(result_dir):
+            os.mkdir(result_dir)
+        utils.plot_loss([G_avg_loss, D_avg_loss], self.num_epochs, save=True, save_dir=result_dir)
         print("Training is finished.")
 
         # Save trained parameters of model
@@ -509,7 +523,7 @@ class SRGAN(object):
                 bc_img = utils.to_np(y_)
 
                 # calculate psnrs
-                bc_psnr = utils.PSNR(bc_img, gt_img)
+                # bc_psnr = utils.PSNR(bc_img, gt_img)
                 recon_psnr = utils.PSNR(recon_img, gt_img)
 
                 result_dir = os.path.join(self.save_dir, 'result')
@@ -521,7 +535,7 @@ class SRGAN(object):
 
                 # save result images
                 result_imgs = [gt_img, bc_img, recon_img]
-                psnrs = [None, bc_psnr, recon_psnr]
+                psnrs = [None, 0, recon_psnr]
                 utils.plot_test_result(result_imgs, psnrs, img_num, save=True, save_dir=result_dir,
                                        show_label=True)
 

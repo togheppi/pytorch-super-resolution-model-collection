@@ -29,21 +29,23 @@ def to_np(x):
 
 def to_var(x):
     if torch.cuda.is_available():
-        x = x.cuda()
+        x = torch.from_numpy(x).cuda()
     return Variable(x)
 
 
 # Plot losses
-def plot_loss(avg_loss, num_epochs, save=False, save_dir='results/', show=False):
+def plot_loss(avg_losses, num_epochs, save=False, save_dir='results/', show=False):
     fig, ax = plt.subplots()
     ax.set_xlim(0, num_epochs)
     temp = 0.0
-    temp = max(np.max(avg_loss), temp)
+    for i in range(len(avg_losses)):
+        temp = max(np.max(avg_losses[i]), temp)
     ax.set_ylim(0, temp*1.1)
     plt.xlabel('# of Epochs')
     plt.ylabel('Loss values')
 
-    plt.plot(avg_loss, label='loss')
+    plt.plot(avg_losses[0], label='G_loss')
+    plt.plot(avg_losses[1], label='D_loss')
     plt.legend()
 
     # save figure
@@ -112,11 +114,11 @@ def weights_init_kaming(m):
 
 
 def plot_test_result(imgs, psnrs, img_num, save=False, save_dir='results/', show=False, show_label=False):
+    size = list(imgs[0].shape)
     if show_label:
         w = 9
         h = 3
     else:
-        size = list(imgs[0].shape)
         w = size[1] * 3 / 100
         h = size[2] / 100
 
@@ -126,8 +128,11 @@ def plot_test_result(imgs, psnrs, img_num, save=False, save_dir='results/', show
         ax.axis('off')
         ax.set_adjustable('box-forced')
 
-        img = img.squeeze()
-        ax.imshow(img, cmap='gray', aspect='equal')
+        if size[0] == 3:
+            ax.imshow(img, cmap='gray', aspect='equal')
+        else:
+            img = img.squeeze()
+            ax.imshow(img, cmap=None, aspect='equal')
         if show_label:
             ax.axis('on')
             if i == 0:

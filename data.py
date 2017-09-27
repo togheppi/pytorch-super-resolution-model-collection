@@ -66,7 +66,7 @@ def target_transform():
     ])
 
 
-def get_training_set(data_dir, dataset,upscale_factor, interpolation=None):
+def get_training_set(data_dir, dataset, upscale_factor, interpolation=None, is_rgb=False):
     root_dir = ''
     input_size = 256
     if dataset == 'bsds300':
@@ -81,13 +81,14 @@ def get_training_set(data_dir, dataset,upscale_factor, interpolation=None):
     crop_size = calculate_valid_crop_size(input_size, upscale_factor)
 
     return DatasetFromFolder(train_dir,
+                             is_rgb=is_rgb,
                              crop_size=crop_size,
                              fliplr=True,
                              input_transform=input_transform(crop_size, upscale_factor, interpolation=interpolation),
                              target_transform=target_transform())
 
 
-def get_test_set(data_dir, dataset, upscale_factor, interpolation=None):
+def get_test_set(data_dir, dataset, upscale_factor, interpolation=None, is_rgb=False):
     root_dir = ''
     input_size = 256
     if dataset == 'bsds300':
@@ -102,6 +103,7 @@ def get_test_set(data_dir, dataset, upscale_factor, interpolation=None):
     crop_size = calculate_valid_crop_size(input_size, upscale_factor)
 
     return DatasetFromFolder(test_dir,
+                             is_rgb=is_rgb,
                              crop_size=crop_size,
                              fliplr=False,
                              input_transform=input_transform(crop_size, upscale_factor, interpolation=interpolation),
