@@ -291,11 +291,11 @@ class SRGAN(object):
     def load_dataset(self, dataset='train'):
         print('Loading datasets...')
         if dataset == 'train':
-            train_set = get_training_set(self.data_dir, self.dataset, self.scale_factor, is_rgb=True)
+            train_set = get_training_set(self.data_dir, self.dataset, self.scale_factor, is_gray=False, normalize=True)
             return DataLoader(dataset=train_set, num_workers=self.num_threads, batch_size=self.batch_size,
                               shuffle=True)
         elif dataset == 'test':
-            test_set = get_test_set(self.data_dir, self.dataset, self.scale_factor, is_rgb=True)
+            test_set = get_test_set(self.data_dir, self.dataset, self.scale_factor, is_gray=False, normalize=True)
             return DataLoader(dataset=test_set, num_workers=self.num_threads,
                               batch_size=self.test_batch_size,
                               shuffle=False)
@@ -447,13 +447,13 @@ class SRGAN(object):
                 D_fake_decision = self.D(recon_image)
 
                 # Adversarial loss
-                GAN_loss = self.BCE_loss(D_fake_decision, real_label)
+                GAN_loss = 0.001 * self.BCE_loss(D_fake_decision, real_label)
 
                 # Content losses
                 mse_loss = self.MSE_loss(recon_image, x_)
                 real_feature = Variable(self.feature_extractor(x_).data.cuda(), requires_grad=False)
                 fake_feature = self.feature_extractor(recon_image)
-                vgg_loss = self.MSE_loss(fake_feature, real_feature)
+                vgg_loss = 0.006 * self.MSE_loss(fake_feature, real_feature)
 
                 # Back propagation
                 G_loss = mse_loss + vgg_loss + GAN_loss
