@@ -113,9 +113,9 @@ def weights_init_kaming(m):
             m.bias.data.zero_()
 
 
-def plot_test_result(imgs, psnrs, img_num, save_dir='', show=False):
+def plot_test_result(imgs, psnrs, img_num, save_dir='', is_training=False, show_label=True, show=False):
     size = list(imgs[0].shape)
-    if psnrs is not None:
+    if show_label:
         h = 3
         w = h * len(imgs)
     else:
@@ -124,11 +124,10 @@ def plot_test_result(imgs, psnrs, img_num, save_dir='', show=False):
 
     fig, axes = plt.subplots(1, len(imgs), figsize=(w, h))
     # axes.axis('off')
-    for i, (ax, img) in enumerate(zip(axes.flatten(), imgs)):
+    for i, (ax, img, psnr) in enumerate(zip(axes.flatten(), imgs, psnrs)):
         ax.axis('off')
         ax.set_adjustable('box-forced')
-
-        if size[0] == 3:
+        if list(img.shape)[0] == 3:
             # Scale to 0-255
             if i < len(imgs) - 1:
                 img = (img * 255).numpy().transpose(1, 2, 0).astype(np.uint8)
@@ -143,20 +142,21 @@ def plot_test_result(imgs, psnrs, img_num, save_dir='', show=False):
 
             ax.imshow(img, cmap=None, aspect='equal')
         else:
-            img = img.squeeze()
+            img = img.squeeze().numpy()
             ax.imshow(img, cmap='gray', aspect='equal')
-        if psnrs is not None:
+
+        if show_label:
             ax.axis('on')
             if i == 0:
                 ax.set_xlabel('HR image')
             elif i == 1:
                 ax.set_xlabel('LR image')
             elif i == 2:
-                ax.set_xlabel('Bicubic (PSNR: %.2fdB)' % psnrs[i])
+                ax.set_xlabel('Bicubic (PSNR: %.2fdB)' % psnr)
             elif i == 3:
-                ax.set_xlabel('SR image (PSNR: %.2fdB)' % psnrs[i])
+                ax.set_xlabel('SR image (PSNR: %.2fdB)' % psnr)
 
-    if psnrs is not None:
+    if show_label:
         plt.tight_layout()
     else:
         plt.subplots_adjust(wspace=0, hspace=0)
@@ -169,8 +169,10 @@ def plot_test_result(imgs, psnrs, img_num, save_dir='', show=False):
     result_dir = os.path.join(save_dir, 'result')
     if not os.path.exists(result_dir):
         os.mkdir(result_dir)
-
-    save_fn = result_dir + '/Test_result_{:d}'.format(img_num) + '.png'
+    if is_training:
+        save_fn = result_dir + '/Train_result_epoch_{:d}'.format(img_num) + '.png'
+    else:
+        save_fn = result_dir + '/Test_result_{:d}'.format(img_num) + '.png'
     plt.savefig(save_fn)
 
     if show:
@@ -179,9 +181,20 @@ def plot_test_result(imgs, psnrs, img_num, save_dir='', show=False):
         plt.close()
 
 
+def shave(imgs, border_size=0):
+    size = list(imgs.shape)
+    if len(size) == 4:
+        shave_imgs = torch.FloatTensor(size[0], size[1], size[2]-border_size*2, size[3]-border_size*2)
+        for i, img in enumerate(imgs):
+            shave_imgs[i, :, :, :] = img[:, border_size:-border_size, border_size:-border_size]
+        return shave_imgs
+    else:
+        return imgs[:, border_size:-border_size, border_size:-border_size]
+
+
 def PSNR(pred, gt):
     diff = pred - gt
-    mse = np.mean(diff ** 2)
+    mse = np.mean(diff.numpy() ** 2)
     if mse == 0:
         return 100
     return 10 * log10(1.0 / mse)
@@ -201,7 +214,7 @@ def denorm(img):
     return transform(img)
 
 
-def img_interp(img, scale_factor, interpolation='bicubic'):
+def img_interp(imgs, scale_factor, interpolation='bicubic'):
     if interpolation == 'bicubic':
         interpolation = Image.BICUBIC
     elif interpolation == 'bilinear':
@@ -209,7 +222,19 @@ def img_interp(img, scale_factor, interpolation='bicubic'):
     elif interpolation == 'nearest':
         interpolation = Image.NEAREST
 
-    transform = transforms.Compose([transforms.ToPILImage(),
-                                    transforms.Scale(scale_factor, interpolation=interpolation),
-                                    transforms.ToTensor])
-    return transform(img)
+    size = list(imgs.shape)
+    if len(size) == 4:
+        interp_imgs = torch.FloatTensor(size[0], size[1], size[2]*scale_factor, size[3]*scale_factor)
+        for i, img in enumerate(imgs):
+            transform = transforms.Compose([transforms.ToPILImage(),
+                                            transforms.Scale((size[2]*scale_factor, size[3]*scale_factor), interpolation=interpolation),
+                                            transforms.ToTensor()])
+
+            interp_imgs[i, :, :, :] = transform(img)
+        return interp_imgs
+    else:
+        transform = transforms.Compose([transforms.ToPILImage(),
+                                        transforms.Scale((size[1] * scale_factor, size[2] * scale_factor),
+                                                         interpolation=interpolation),
+                                        transforms.ToTensor()])
+        return transform(imgs)

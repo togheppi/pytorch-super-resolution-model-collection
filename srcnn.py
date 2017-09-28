@@ -52,15 +52,20 @@ class SRCNN(object):
             self.image_size = 64
 
     def load_dataset(self, dataset='train'):
+        if self.num_channels == 1:
+            is_gray = True
+        else:
+            is_gray = False
+
         if dataset == 'train':
             print('Loading train datasets...')
-            train_set = get_training_set(self.data_dir, self.dataset, self.image_size, self.scale_factor, is_gray=False,
+            train_set = get_training_set(self.data_dir, self.dataset, self.image_size, self.scale_factor, is_gray=is_gray,
                                          normalize=False)
             return DataLoader(dataset=train_set, num_workers=self.num_threads, batch_size=self.batch_size,
                               shuffle=True)
         elif dataset == 'test':
             print('Loading test datasets...')
-            test_set = get_test_set(self.data_dir, self.dataset, self.image_size, self.scale_factor, is_gray=False,
+            test_set = get_test_set(self.data_dir, self.dataset, self.image_size, self.scale_factor, is_gray=is_gray,
                                     normalize=False)
             return DataLoader(dataset=test_set, num_workers=self.num_threads,
                               batch_size=self.test_batch_size,
@@ -112,20 +117,17 @@ class SRCNN(object):
             for iter, (input, target) in enumerate(train_data_loader):
                 # input data (bicubic interpolated image)
                 if self.gpu_mode:
-                    x_ = Variable(target.cuda())
-                    y_ = Variable(utils.img_interp(input).cuda())
+                    # exclude border pixels from loss computation
+                    x_ = Variable(utils.shave(target, border_size=6).cuda())
+                    y_ = Variable(utils.img_interp(input, self.scale_factor).cuda())
                 else:
-                    x_ = Variable(target)
-                    y_ = Variable(utils.img_interp(input))
+                    x_ = Variable(utils.shave(target, border_size=6))
+                    y_ = Variable(utils.img_interp(input, self.scale_factor))
 
                 # update network
                 self.optimizer.zero_grad()
                 recon_image = self.model(y_)
-
-                # exclude border pixels from loss computation
-                padding = 6
-                x_crop = utils.to_var(utils.to_np(x_)[:, :, padding:-padding, padding:-padding])
-                loss = self.MSE_loss(recon_image, x_crop)
+                loss = self.MSE_loss(recon_image, x_)
                 loss.backward()
                 self.optimizer.step()
 
@@ -141,11 +143,11 @@ class SRCNN(object):
             avg_loss.append(epoch_loss / len(train_data_loader))
 
             # prediction
-            recon_img = self.model(Variable(utils.img_interp(test_input).cuda()))
-            recon_img = recon_img[0].cpu().data
-            gt_img = test_target[0]
+            recon_imgs = self.model(Variable(utils.img_interp(test_input, self.scale_factor).cuda()))
+            recon_img = recon_imgs[0].cpu().data
+            gt_img = utils.shave(test_target[0], border_size=6)
             lr_img = test_input[0]
-            bc_img = utils.img_interp(lr_img)
+            bc_img = utils.shave(utils.img_interp(test_input[0], self.scale_factor), border_size=6)
 
             # calculate psnrs
             bc_psnr = utils.PSNR(bc_img, gt_img)
@@ -153,10 +155,10 @@ class SRCNN(object):
 
             # save result images
             result_imgs = [gt_img, lr_img, bc_img, recon_img]
-            psnrs = [None, bc_psnr, recon_psnr]
-            utils.plot_test_result(result_imgs, psnrs, epoch, save_dir=self.save_dir)
+            psnrs = [None, None, bc_psnr, recon_psnr]
+            utils.plot_test_result(result_imgs, psnrs, epoch + 1, save_dir=self.save_dir, is_training=True)
 
-            print("Saving training result images at epoch %d" % epoch)
+            print("Saving training result images at epoch %d" % (epoch + 1))
 
         # Plot avg. loss
         utils.plot_loss([avg_loss], self.num_epochs, save_dir=self.save_dir)
@@ -185,20 +187,18 @@ class SRCNN(object):
         for input, target in test_data_loader:
             # input data (bicubic interpolated image)
             if self.gpu_mode:
-                y_ = Variable(utils.img_interp(input).cuda())
+                y_ = Variable(utils.img_interp(input, self.scale_factor).cuda())
             else:
-                y_ = Variable(utils.img_interp(input))
+                y_ = Variable(utils.img_interp(input, self.scale_factor))
 
             # prediction
             recon_imgs = self.model(y_)
-            padding = 6
-            for i, recon_img in enumerate(recon_imgs):
+            for i in range(self.test_batch_size):
                 img_num += 1
-                recon_img = recon_img.cpu().data[:, padding:-padding, padding:-padding]
-                gt_img = target[i][:, padding:-padding, padding:-padding]
-                lr_img = input[i][:, padding:-padding, padding:-padding]
-                bc_img = utils.img_interp(lr_img)
-
+                recon_img = recon_imgs[i].cpu().data
+                gt_img = utils.shave(target[i], border_size=6)
+                lr_img = input[i]
+                bc_img = utils.shave(utils.img_interp(input[i], self.scale_factor), border_size=6)
 
                 # calculate psnrs
                 bc_psnr = utils.PSNR(bc_img, gt_img)
@@ -206,7 +206,7 @@ class SRCNN(object):
 
                 # save result images
                 result_imgs = [gt_img, lr_img, bc_img, recon_img]
-                psnrs = [None, bc_psnr, recon_psnr]
+                psnrs = [None, None, bc_psnr, recon_psnr]
                 utils.plot_test_result(result_imgs, psnrs, img_num, save_dir=self.save_dir)
 
                 print("Saving %d test result images..." % img_num)

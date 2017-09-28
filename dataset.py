@@ -3,7 +3,6 @@ from torchvision.transforms import *
 from os import listdir
 from os.path import join
 from PIL import Image
-import random
 
 
 def is_image_file(filename):
@@ -13,7 +12,6 @@ def is_image_file(filename):
 def load_img(filepath):
     img = Image.open(filepath).convert('RGB')
     return img
-
 
 
 class DatasetFromFolder(data.Dataset):
@@ -39,6 +37,10 @@ class DatasetFromFolder(data.Dataset):
             transform = RandomHorizontalFlip()
             input = transform(input)
 
+        if self.is_gray:
+            input = input.convert('YCbCr')
+            input, _, _ = input.split()
+
         target = input.copy()
 
         if self.input_transform:
@@ -46,14 +48,7 @@ class DatasetFromFolder(data.Dataset):
         if self.target_transform:
             target = self.target_transform(target)
 
-        if self.is_gray:
-            input = input.convert('YCbCr')
-            input_y, _, _ = input.split()
-            target = target.convert('YCbCr')
-            target_y, _, _ = target.split()
-            return input_y, target_y
-        else:
-            return input, target
+        return input, target
 
     def __len__(self):
         return len(self.image_filenames)
