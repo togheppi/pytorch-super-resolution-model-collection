@@ -6,7 +6,7 @@ from PIL import Image
 
 
 def is_image_file(filename):
-    return any(filename.endswith(extension) for extension in [".png", ".jpg", ".jpeg"])
+    return any(filename.endswith(extension) for extension in [".png", ".jpg", ".jpeg", ".bmp"])
 
 
 def load_img(filepath):
@@ -28,9 +28,9 @@ class DatasetFromFolder(data.Dataset):
     def __getitem__(self, index):
         input = load_img(self.image_filenames[index])
 
-        if self.crop_size:
-            # random crop &
-            transform = RandomCrop(self.crop_size)
+        if self.crop_size is not None:
+            # center crop
+            transform = CenterCrop(self.crop_size)
             input = transform(input)
         if self.fliplr:
             # random flip
@@ -43,9 +43,9 @@ class DatasetFromFolder(data.Dataset):
 
         target = input.copy()
 
-        if self.input_transform:
+        if self.input_transform is not None:
             input = self.input_transform(input)
-        if self.target_transform:
+        if self.target_transform is not None:
             target = self.target_transform(target)
 
         return input, target

@@ -92,7 +92,9 @@ class SRGAN(object):
     def __init__(self, args):
         # parameters
         self.model_name = args.model_name
-        self.dataset = args.dataset
+        self.train_dataset = args.train_dataset
+        self.test_dataset = args.test_dataset
+        self.crop_size = args.crop_size
         self.num_threads = args.num_threads
         self.num_channels = args.num_channels
         self.scale_factor = args.scale_factor
@@ -104,13 +106,6 @@ class SRGAN(object):
         self.save_dir = args.save_dir
         self.gpu_mode = args.gpu_mode
 
-        if self.dataset == 'bsds300':
-            self.image_size = 256
-        elif self.dataset == 'mnist':
-            self.image_size = 28
-        elif self.dataset == 'celebA':
-            self.image_size = 64
-
     def load_dataset(self, dataset='train'):
         if self.num_channels == 1:
             is_gray = True
@@ -119,22 +114,26 @@ class SRGAN(object):
 
         if dataset == 'train':
             print('Loading train datasets...')
-            train_set = get_training_set(self.data_dir, self.dataset, self.image_size, self.scale_factor, is_gray=is_gray,
+            train_set = get_training_set(self.data_dir, self.train_dataset, self.crop_size, self.scale_factor, is_gray=is_gray,
                                          normalize=False)
             return DataLoader(dataset=train_set, num_workers=self.num_threads, batch_size=self.batch_size,
                               shuffle=True)
         elif dataset == 'test':
             print('Loading test datasets...')
-            test_set = get_test_set(self.data_dir, self.dataset, self.image_size, self.scale_factor, is_gray=is_gray,
+            test_set = get_test_set(self.data_dir, self.test_dataset, self.crop_size, self.scale_factor, is_gray=is_gray,
                                     normalize=False)
             return DataLoader(dataset=test_set, num_workers=self.num_threads,
                               batch_size=self.test_batch_size,
                               shuffle=False)
 
     def train(self):
+        # load dataset
+        train_data_loader = self.load_dataset(dataset='train')
+        test_data_loader = self.load_dataset(dataset='test')
+
         # networks
         self.G = Generator(num_channels=self.num_channels, base_filter=64, num_residuals=16)
-        self.D = Discriminator(num_channels=self.num_channels, base_filter=64, image_size=self.image_size)
+        self.D = Discriminator(num_channels=self.num_channels, base_filter=64, image_size=self.crop_size)
 
         # weigh initialization
         self.G.weight_init()
@@ -163,10 +162,6 @@ class SRGAN(object):
         utils.print_network(self.G)
         utils.print_network(self.D)
         print('----------------------------------------------')
-
-        # load dataset
-        train_data_loader = self.load_dataset(dataset='train')
-        test_data_loader = self.load_dataset(dataset='test')
         
         # set the logger
         G_log_dir = os.path.join(self.save_dir, 'G_logs')

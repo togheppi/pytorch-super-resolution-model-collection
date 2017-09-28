@@ -6,6 +6,19 @@ from torchvision.transforms import *
 from dataset import DatasetFromFolder
 
 
+def determine_crop_size(dataset, crop_size, scale_factor):
+    # determine crop size
+    if dataset == 'bsds300':
+        crop_size = 256
+    elif dataset == 'mnist':
+        crop_size = 28
+    elif dataset == 'celebA':
+        crop_size = 64
+
+    crop_size = crop_size - (crop_size % scale_factor)
+    return crop_size
+
+
 def download_bsds300(dest="dataset"):
     output_image_dir = join(dest, "BSDS300/images")
 
@@ -31,17 +44,9 @@ def download_bsds300(dest="dataset"):
     return output_image_dir
 
 
-def calculate_valid_crop_size(crop_size, upscale_factor):
-    return crop_size - (crop_size % upscale_factor)
-
-
-def input_transform(crop_size, upscale_factor, normalize=False):
+def input_transform(image_size, scale_factor, normalize=False):
     # downscale to low-resolution image
-    transforms = [Scale(crop_size // upscale_factor)]
-
-    # # upscale back to high-resolution image
-    # if interpolation is not None:
-    #     transforms.append(Scale(crop_size, interpolation=interpolation))
+    transforms = [Scale(image_size // scale_factor)]
 
     # convert (0, 255) image to torch.tensor (0, 1)
     transforms.append(ToTensor())
@@ -66,33 +71,35 @@ def target_transform(normalize=False):
     return Compose(transforms)
 
 
-def get_training_set(data_dir, dataset, image_size, upscale_factor, is_gray=False, normalize=False):
-    root_dir = ''
+def get_training_set(data_dir, dataset, crop_size, scale_factor, is_gray=False, normalize=False):
     if dataset == 'bsds300':
         root_dir = download_bsds300(data_dir)
+        train_dir = join(root_dir, "train")
+    else:
+        train_dir = join(data_dir, dataset)
 
-    train_dir = join(root_dir, "train")
-    crop_size = calculate_valid_crop_size(image_size, upscale_factor)
+    crop_size = determine_crop_size(dataset, crop_size, scale_factor)
 
     return DatasetFromFolder(train_dir,
                              is_gray=is_gray,
-                             crop_size=crop_size,   # random crop
+                             crop_size=crop_size,   # center crop
                              fliplr=True,           # random flip
-                             input_transform=input_transform(crop_size, upscale_factor, normalize=normalize),
+                             input_transform=input_transform(crop_size, scale_factor, normalize=normalize),
                              target_transform=target_transform(normalize=normalize))
 
 
-def get_test_set(data_dir, dataset, image_size, upscale_factor, is_gray=False, normalize=False):
-    root_dir = ''
+def get_test_set(data_dir, dataset, crop_size, scale_factor, is_gray=False, normalize=False):
     if dataset == 'bsds300':
         root_dir = download_bsds300(data_dir)
+        test_dir = join(root_dir, "test")
+    else:
+        test_dir = join(data_dir, dataset)
 
-    test_dir = join(root_dir, "test")
-    crop_size = calculate_valid_crop_size(image_size, upscale_factor)
+    crop_size = determine_crop_size(dataset, crop_size, scale_factor)
 
     return DatasetFromFolder(test_dir,
                              is_gray=is_gray,
-                             crop_size=crop_size,   # random crop
-                             fliplr=False,          # random flip
-                             input_transform=input_transform(crop_size, upscale_factor, normalize=normalize),
+                             crop_size=crop_size,   # center crop
+                             fliplr=False,          # No flip
+                             input_transform=input_transform(crop_size, scale_factor, normalize=normalize),
                              target_transform=target_transform(normalize=normalize))
