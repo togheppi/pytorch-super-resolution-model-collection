@@ -2,8 +2,7 @@ from os.path import exists, join, basename
 from os import makedirs, remove
 from six.moves import urllib
 import tarfile
-from torchvision.transforms import Compose, Normalize, ToTensor, Scale
-from PIL import Image
+from torchvision.transforms import *
 from dataset import DatasetFromFolder
 
 
@@ -36,81 +35,64 @@ def calculate_valid_crop_size(crop_size, upscale_factor):
     return crop_size - (crop_size % upscale_factor)
 
 
-def input_transform(crop_size, upscale_factor, interpolation=None, normalize=True):
-    if interpolation == 'bicubic':
-        interpolation = Image.BICUBIC
-    elif interpolation == 'bilinear':
-        interpolation = Image.BILINEAR
-    elif interpolation == 'nearest':
-        interpolation = Image.NEAREST
-
+def input_transform(crop_size, upscale_factor, normalize=False):
     # downscale to low-resolution image
     transforms = [Scale(crop_size // upscale_factor)]
 
-    # upscale back to high-resolution image
-    if interpolation is not None:
-        transforms.append(Scale(crop_size, interpolation=interpolation))
+    # # upscale back to high-resolution image
+    # if interpolation is not None:
+    #     transforms.append(Scale(crop_size, interpolation=interpolation))
 
     # convert (0, 255) image to torch.tensor (0, 1)
     transforms.append(ToTensor())
 
-    # normalize (-1 ,1)
+    # normalize (-1, 1)
     if normalize:
-        transforms.append(Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)))
+        transforms.append(Normalize(mean=[0.5, 0.5, 0.5],
+                                    std=[0.5, 0.5, 0.5]))
 
     return Compose(transforms)
 
 
-def target_transform(normalize=True):
+def target_transform(normalize=False):
     # convert (0, 255) image to torch.tensor (0, 1)
     transforms = [ToTensor()]
 
-    # normalize (-1 ,1)
+    # normalize (-1, 1)
     if normalize:
-        transforms.append(Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)))
+        transforms.append(Normalize(mean=[0.5, 0.5, 0.5],
+                                    std=[0.5, 0.5, 0.5]))
 
     return Compose(transforms)
 
 
-def get_training_set(data_dir, dataset, upscale_factor, interpolation=None, is_gray=False, normalize=True):
+def get_training_set(data_dir, dataset, image_size, upscale_factor, is_gray=False, normalize=False):
     root_dir = ''
-    input_size = 256
     if dataset == 'bsds300':
         root_dir = download_bsds300(data_dir)
-        input_size = 256
-    elif dataset == 'fashion-mnist':
-        input_size = 28
-    elif dataset == 'celebA':
-        input_size = 64
 
     train_dir = join(root_dir, "train")
-    crop_size = calculate_valid_crop_size(input_size, upscale_factor)
+    crop_size = calculate_valid_crop_size(image_size, upscale_factor)
 
     return DatasetFromFolder(train_dir,
                              is_gray=is_gray,
                              crop_size=crop_size,   # random crop
                              fliplr=True,           # random flip
-                             input_transform=input_transform(crop_size, upscale_factor, interpolation=interpolation, normalize=normalize),
-                             target_transform=target_transform())
+                             input_transform=input_transform(crop_size, upscale_factor, normalize=normalize),
+                             target_transform=target_transform(normalize=normalize))
 
 
-def get_test_set(data_dir, dataset, upscale_factor, interpolation=None, is_gray=False, normalize=True):
+def get_test_set(data_dir, dataset, image_size, upscale_factor, is_gray=False, normalize=False):
     root_dir = ''
-    input_size = 256
     if dataset == 'bsds300':
         root_dir = download_bsds300(data_dir)
-        input_size = 256
-    elif dataset == 'fashion-mnist':
-        input_size = 28
-    elif dataset == 'celebA':
-        input_size = 64
 
     test_dir = join(root_dir, "test")
-    crop_size = calculate_valid_crop_size(input_size, upscale_factor)
+    crop_size = calculate_valid_crop_size(image_size, upscale_factor)
 
     return DatasetFromFolder(test_dir,
                              is_gray=is_gray,
                              crop_size=crop_size,   # random crop
                              fliplr=False,          # random flip
-                             input_transform=input_transform(crop_size, upscale_factor, interpolation=interpolation, normalize=normalize),
-                             target_transform=target_transform())
+                             input_transform=input_transform(crop_size, upscale_factor, normalize=normalize),
+                             target_transform=target_transform(normalize=normalize))

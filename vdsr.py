@@ -51,6 +51,29 @@ class VDSR(object):
         self.save_dir = args.save_dir
         self.gpu_mode = args.gpu_mode
 
+        if self.dataset == 'bsds300':
+            self.image_size = 256
+        elif self.dataset == 'mnist':
+            self.image_size = 28
+        elif self.dataset == 'celebA':
+            self.image_size = 64
+
+    def load_dataset(self, dataset='train'):
+        if dataset == 'train':
+            print('Loading train datasets...')
+            train_set = get_training_set(self.data_dir, self.dataset, self.image_size, self.scale_factor, is_gray=False,
+                                         normalize=False)
+            return DataLoader(dataset=train_set, num_workers=self.num_threads, batch_size=self.batch_size,
+                              shuffle=True)
+        elif dataset == 'test':
+            print('Loading test datasets...')
+            test_set = get_test_set(self.data_dir, self.dataset, self.image_size, self.scale_factor, is_gray=False,
+                                    normalize=False)
+            return DataLoader(dataset=test_set, num_workers=self.num_threads,
+                              batch_size=self.test_batch_size,
+                              shuffle=False)
+
+    def train(self):
         # networks
         self.model = Net(num_channels=self.num_channels, base_filter=64, num_residuals=18)
 
@@ -75,20 +98,9 @@ class VDSR(object):
         utils.print_network(self.model)
         print('----------------------------------------------')
 
-    def load_dataset(self, dataset='train'):
-        print('Loading datasets...')
-        if dataset == 'train':
-            train_set = get_training_set(self.data_dir, self.dataset, self.scale_factor, interpolation='bicubic')
-            return DataLoader(dataset=train_set, num_workers=self.num_threads, batch_size=self.batch_size, shuffle=True)
-        elif dataset == 'test':
-            test_set = get_test_set(self.data_dir, self.dataset, self.scale_factor, interpolation='bicubic')
-            return DataLoader(dataset=test_set, num_workers=self.num_threads, batch_size=self.test_batch_size,
-                              shuffle=False)
-
-
-    def train(self):
         # load dataset
         train_data_loader = self.load_dataset(dataset='train')
+        test_data_loader = self.load_dataset(dataset='test')
 
         # set the logger
         log_dir = os.path.join(self.save_dir, 'logs')
@@ -96,10 +108,14 @@ class VDSR(object):
             os.mkdir(log_dir)
         logger = Logger(log_dir)
 
-        # Train
+        ################# Train #################
         print('Training is started.')
         avg_loss = []
         step = 0
+
+        # test image
+        test_input, test_target = test_data_loader.__iter__().__next__()
+
         self.model.train()
         for epoch in range(self.num_epochs):
 
@@ -111,19 +127,21 @@ class VDSR(object):
 
             epoch_loss = 0
             for iter, (input, target) in enumerate(train_data_loader):
-                # input data
+                # input data (bicubic interpolated image)
                 if self.gpu_mode:
                     x_ = Variable(target.cuda())
-                    y_ = Variable(input.cuda())
+                    y_ = Variable(utils.img_interp(input).cuda())
                 else:
                     x_ = Variable(target)
-                    y_ = Variable(input)
+                    y_ = Variable(utils.img_interp(input))
 
                 # update network
                 self.optimizer.zero_grad()
-                self.pred = self.model(y_)
-                loss = self.MSE_loss(self.pred, x_)
+                recon_image = self.model(y_)
+                loss = self.MSE_loss(recon_image, x_)
                 loss.backward()
+
+                # gradient clipping
                 nn.utils.clip_grad_norm(self.model.parameters(), self.clip)
                 self.optimizer.step()
 
@@ -139,73 +157,91 @@ class VDSR(object):
             # avg. loss per epoch
             avg_loss.append(epoch_loss / len(train_data_loader))
 
+            # prediction
+            recon_img = self.model(Variable(utils.img_interp(test_input).cuda()))
+            recon_img = recon_img[0].cpu().data
+            gt_img = test_target[0]
+            lr_img = test_input[0]
+            bc_img = utils.img_interp(lr_img)
+
+            # calculate psnrs
+            bc_psnr = utils.PSNR(bc_img, gt_img)
+            recon_psnr = utils.PSNR(recon_img, gt_img)
+
+            # save result images
+            result_imgs = [gt_img, lr_img, bc_img, recon_img]
+            psnrs = [None, bc_psnr, recon_psnr]
+            utils.plot_test_result(result_imgs, psnrs, epoch, save_dir=self.save_dir)
+
+            print("Saving training result images at epoch %d" % epoch)
+
         # Plot avg. loss
-        result_dir = os.path.join(self.save_dir, 'result')
-        if not os.path.exists(result_dir):
-            os.mkdir(result_dir)
-        utils.plot_loss(avg_loss, self.num_epochs, save=True, save_dir=result_dir)
+        utils.plot_loss([avg_loss], self.num_epochs, save_dir=self.save_dir)
         print("Training is finished.")
 
         # Save trained parameters of model
-        model_dir = os.path.join(self.save_dir, 'model')
-        if not os.path.exists(model_dir):
-            os.mkdir(model_dir)
-        self.save_model(model_dir)
+        self.save_model()
 
-    def test(self, model_name):
+    def test(self):
+        # networks
+        self.model = Net(num_channels=self.num_channels, base_filter=64, num_residuals=18)
+
+        if self.gpu_mode:
+            self.model.cuda()
+
         # load model
-        self.load_model(model_name)
+        self.load_model()
 
         # load dataset
         test_data_loader = self.load_dataset(dataset='test')
 
         # Test
         print('Test is started.')
-        avg_psnr = 0
         img_num = 0
         self.model.eval()
         for input, target in test_data_loader:
-            # input data
+            # input data (bicubic interpolated image)
             if self.gpu_mode:
-                x_ = Variable(target.cuda())
-                y_ = Variable(input.cuda())
+                y_ = Variable(utils.img_interp(input).cuda())
             else:
-                x_ = Variable(target)
-                y_ = Variable(input)
+                y_ = Variable(utils.img_interp(input))
 
             # prediction
-            self.pred = self.model(y_)
-            recon_imgs = utils.to_np(self.pred)
+            recon_imgs = self.model(y_)
             for i, recon_img in enumerate(recon_imgs):
                 img_num += 1
-                gt_img = utils.to_np(x_)
-                bc_img = utils.to_np(y_)
+                recon_img = recon_img.cpu().data
+                gt_img = target[i]
+                lr_img = input[i]
+                bc_img = utils.img_interp(lr_img)
 
                 # calculate psnrs
                 bc_psnr = utils.PSNR(bc_img, gt_img)
                 recon_psnr = utils.PSNR(recon_img, gt_img)
 
-                result_dir = os.path.join(self.save_dir, 'result')
-                if not os.path.exists(result_dir):
-                    os.mkdir(result_dir)
-
-                # result_imgs = np.concatenate((gt_img, bc_img, recon_img), axis=1)
-                # imsave(result_dir + '/Test_result_img_%d.png' % step, result_imgs)
-
                 # save result images
-                result_imgs = [gt_img, bc_img, recon_img]
+                result_imgs = [gt_img, lr_img, bc_img, recon_img]
                 psnrs = [None, bc_psnr, recon_psnr]
-                utils.plot_test_result(result_imgs, psnrs, img_num, save=True, save_dir=result_dir, show_label=True)
+                utils.plot_test_result(result_imgs, psnrs, img_num, save_dir=self.save_dir)
 
                 print("Saving %d test result images..." % img_num)
 
-            psnr = utils.PSNR(recon_imgs, utils.to_np(x_))
-            avg_psnr += psnr
+    def save_model(self):
+        model_dir = os.path.join(self.save_dir, 'model')
+        if not os.path.exists(model_dir):
+            os.mkdir(model_dir)
 
-        print("Avg. PSNR: {:.4f} dB".format(avg_psnr / len(test_data_loader)))
-
-    def save_model(self, model_dir):
         torch.save(self.model.state_dict(), model_dir + '/' + self.model_name + '_param.pkl')
+        print('Trained model is saved.')
 
-    def load_model(self, model_name):
-        self.model.load_state_dict(torch.load(model_name))
+    def load_model(self):
+        model_dir = os.path.join(self.save_dir, 'model')
+
+        model_name = model_dir + '/' + self.model_name + '_param.pkl'
+        if os.path.exists(model_name):
+            self.model.load_state_dict(torch.load(model_name))
+            print('Trained generator model is loaded.')
+            return True
+        else:
+            print('No model exists to load.')
+            return False

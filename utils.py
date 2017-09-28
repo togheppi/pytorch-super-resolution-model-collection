@@ -1,5 +1,7 @@
 import torch
 from torch.autograd import Variable
+import torchvision.transforms as transforms
+from PIL import Image
 from math import log10
 import numpy as np
 import matplotlib.pyplot as plt
@@ -16,12 +18,6 @@ def print_network(net):
     print('Total number of parameters: %d' % num_params)
 
 
-# De-normalization
-def denorm(x):
-    out = (x + 1) / 2
-    return out.clamp(0, 1)
-
-
 # For logger
 def to_np(x):
     return x.data.cpu().numpy()
@@ -34,7 +30,7 @@ def to_var(x):
 
 
 # Plot losses
-def plot_loss(avg_losses, num_epochs, save=False, save_dir='results/', show=False):
+def plot_loss(avg_losses, num_epochs, save_dir='', show=False):
     fig, ax = plt.subplots()
     ax.set_xlim(0, num_epochs)
     temp = 0.0
@@ -44,17 +40,21 @@ def plot_loss(avg_losses, num_epochs, save=False, save_dir='results/', show=Fals
     plt.xlabel('# of Epochs')
     plt.ylabel('Loss values')
 
-    plt.plot(avg_losses[0], label='G_loss')
-    plt.plot(avg_losses[1], label='D_loss')
+    if len(avg_losses) == 1:
+        plt.plot(avg_losses[0], label='loss')
+    else:
+        plt.plot(avg_losses[0], label='G_loss')
+        plt.plot(avg_losses[1], label='D_loss')
     plt.legend()
 
     # save figure
-    if save:
-        if not os.path.exists(save_dir):
-            os.mkdir(save_dir)
-        save_fn = 'Loss_values_epoch_{:d}'.format(num_epochs) + '.png'
-        save_fn = os.path.join(save_dir, save_fn)
-        plt.savefig(save_fn)
+    result_dir = os.path.join(save_dir, 'result')
+    if not os.path.exists(result_dir):
+        os.mkdir(result_dir)
+
+    save_fn = 'Loss_values_epoch_{:d}'.format(num_epochs) + '.png'
+    save_fn = os.path.join(result_dir, save_fn)
+    plt.savefig(save_fn)
 
     if show:
         plt.show()
@@ -113,36 +113,50 @@ def weights_init_kaming(m):
             m.bias.data.zero_()
 
 
-def plot_test_result(imgs, psnrs, img_num, save=False, save_dir='results/', show=False, show_label=False):
+def plot_test_result(imgs, psnrs, img_num, save_dir='', show=False):
     size = list(imgs[0].shape)
-    if show_label:
-        w = 9
+    if psnrs is not None:
         h = 3
+        w = h * len(imgs)
     else:
-        w = size[1] * 3 / 100
         h = size[2] / 100
+        w = size[1] * len(imgs) / 100
 
-    fig, axes = plt.subplots(1, 3, figsize=(w, h))
+    fig, axes = plt.subplots(1, len(imgs), figsize=(w, h))
     # axes.axis('off')
-    for i, (ax, img, psnr) in enumerate(zip(axes.flatten(), imgs, psnrs)):
+    for i, (ax, img) in enumerate(zip(axes.flatten(), imgs)):
         ax.axis('off')
         ax.set_adjustable('box-forced')
 
         if size[0] == 3:
-            ax.imshow(img, cmap='gray', aspect='equal')
+            # Scale to 0-255
+            if i < len(imgs) - 1:
+                img = (img * 255).numpy().transpose(1, 2, 0).astype(np.uint8)
+            else:
+                img = (((img - img.min()) * 255) / (img.max() - img.min())).numpy().transpose(1, 2, 0).astype(np.uint8)
+                # img = img.numpy().astype(np.float32)
+                #
+                # img = img * 255.
+                # img[img < 0] = 0
+                # img[img > 255.] = 255.
+                # img = img.transpose(1, 2, 0)
+
+            ax.imshow(img, cmap=None, aspect='equal')
         else:
             img = img.squeeze()
-            ax.imshow(img, cmap=None, aspect='equal')
-        if show_label:
+            ax.imshow(img, cmap='gray', aspect='equal')
+        if psnrs is not None:
             ax.axis('on')
             if i == 0:
                 ax.set_xlabel('HR image')
             elif i == 1:
-                ax.set_xlabel('Bicubic (PSNR: %.2fdB)' % psnr)
+                ax.set_xlabel('LR image')
             elif i == 2:
-                ax.set_xlabel('SR image (PSNR: %.2fdB)' % psnr)
+                ax.set_xlabel('Bicubic (PSNR: %.2fdB)' % psnrs[i])
+            elif i == 3:
+                ax.set_xlabel('SR image (PSNR: %.2fdB)' % psnrs[i])
 
-    if show_label:
+    if psnrs is not None:
         plt.tight_layout()
     else:
         plt.subplots_adjust(wspace=0, hspace=0)
@@ -152,12 +166,12 @@ def plot_test_result(imgs, psnrs, img_num, save=False, save_dir='results/', show
         plt.subplots_adjust(left=0)
 
     # save figure
-    if save:
-        if not os.path.exists(save_dir):
-            os.mkdir(save_dir)
+    result_dir = os.path.join(save_dir, 'result')
+    if not os.path.exists(result_dir):
+        os.mkdir(result_dir)
 
-        save_fn = save_dir + '/Test_result_{:d}'.format(img_num) + '.png'
-        plt.savefig(save_fn)
+    save_fn = result_dir + '/Test_result_{:d}'.format(img_num) + '.png'
+    plt.savefig(save_fn)
 
     if show:
         plt.show()
@@ -171,3 +185,31 @@ def PSNR(pred, gt):
     if mse == 0:
         return 100
     return 10 * log10(1.0 / mse)
+
+
+# normalize for pre-trained vgg model
+# https://github.com/pytorch/examples/blob/42e5b996718797e45c46a25c55b031e6768f8440/imagenet/main.py#L89-L101
+def norm(img):
+    transform = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                     std=[0.229, 0.224, 0.225])
+    return transform(img)
+
+
+def denorm(img):
+    transform = transforms.Normalize(mean=[-2.118, -2.036, -1.804],
+                                     std=[4.367, 4.464, 4.444])
+    return transform(img)
+
+
+def img_interp(img, scale_factor, interpolation='bicubic'):
+    if interpolation == 'bicubic':
+        interpolation = Image.BICUBIC
+    elif interpolation == 'bilinear':
+        interpolation = Image.BILINEAR
+    elif interpolation == 'nearest':
+        interpolation = Image.NEAREST
+
+    transform = transforms.Compose([transforms.ToPILImage(),
+                                    transforms.Scale(scale_factor, interpolation=interpolation),
+                                    transforms.ToTensor])
+    return transform(img)
