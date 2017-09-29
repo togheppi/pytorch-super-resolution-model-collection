@@ -30,8 +30,7 @@ class Net(torch.nn.Module):
 
         # initial w
         init_w = torch.ones(self.num_recursions) / self.num_recursions
-        self.w = Variable(init_w, requires_grad=True)
-
+        self.w = Variable(init_w, requires_grad=True).cuda()
 
     def forward(self, x):
         # embedding layer
@@ -46,7 +45,8 @@ class Net(torch.nn.Module):
         out_sum = 0
         for d in range(self.num_recursions):
             y_d_.append(self.reconstruction_layer(h[d+1]))
-            out_sum += (self.w[d] * y_d_[d] / torch.sum(self.w[d]))
+            out_sum += torch.mul(y_d_[d], self.w[d].data[0])
+        out_sum = torch.mul(out_sum, torch.reciprocal(torch.sum(self.w)).data[0])
 
         # skip connection
         final_out = torch.add(out_sum, x)
@@ -180,7 +180,7 @@ class DRCN(object):
                 # regularization
                 reg_term = 0
                 for theta in self.model.parameters():
-                    reg_term += self.MSE_loss(theta, 0)
+                    reg_term += torch.mean(torch.sum(theta ** 2))
 
                 # total loss
 
@@ -190,8 +190,7 @@ class DRCN(object):
 
                 # log
                 epoch_loss += loss.data[0]
-                print("Epoch: [%2d] [%4d/%4d] loss: %.8f" % (
-                (epoch + 1), (iter + 1), len(train_data_loader), loss.data[0]))
+                print("Epoch: [%2d] [%4d/%4d] loss: %.8f" % ((epoch + 1), (iter + 1), len(train_data_loader), loss.data[0]))
 
                 # tensorboard logging
                 logger.scalar_summary('loss', loss.data[0], step + 1)
@@ -201,7 +200,7 @@ class DRCN(object):
             avg_loss.append(epoch_loss / len(train_data_loader))
 
             # prediction
-            recon_imgs = self.model(Variable(utils.img_interp(test_input, self.scale_factor).cuda()))
+            _, recon_imgs = self.model(Variable(utils.img_interp(test_input, self.scale_factor).cuda()))
             recon_img = recon_imgs[0].cpu().data
             gt_img = test_target[0]
             lr_img = test_input[0]
@@ -250,7 +249,7 @@ class DRCN(object):
                 y_ = Variable(utils.img_interp(input, self.scale_factor))
 
             # prediction
-            recon_imgs = self.model(y_)
+            _, recon_imgs = self.model(y_)
             for i, recon_img in enumerate(recon_imgs):
                 img_num += 1
                 recon_img = recon_imgs[i].cpu().data
