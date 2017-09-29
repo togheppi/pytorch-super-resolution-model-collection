@@ -15,8 +15,8 @@ class Net(torch.nn.Module):
 
         self.layers = torch.nn.Sequential(
             ConvBlock(num_channels, base_filter, 9, 1, 0, norm=None),
-            ConvBlock(base_filter, base_filter // 2, 1, 1, 0, norm=None),
-            ConvBlock(base_filter // 2, num_channels, 5, 1, 0, activation=None, norm=None),
+            ConvBlock(base_filter, base_filter // 2, 5, 1, 0, norm=None),
+            ConvBlock(base_filter // 2, num_channels, 5, 1, 0, activation=None, norm=None)
         )
 
     def forward(self, x):
@@ -39,6 +39,7 @@ class SRCNN(object):
         self.num_channels = args.num_channels
         self.scale_factor = args.scale_factor
         self.num_epochs = args.num_epochs
+        self.save_epochs = args.save_epochs
         self.batch_size = args.batch_size
         self.test_batch_size = args.test_batch_size
         self.lr = args.lr
@@ -113,10 +114,10 @@ class SRCNN(object):
                 # input data (bicubic interpolated image)
                 if self.gpu_mode:
                     # exclude border pixels from loss computation
-                    x_ = Variable(utils.shave(target, border_size=6).cuda())
+                    x_ = Variable(utils.shave(target, border_size=8).cuda())
                     y_ = Variable(utils.img_interp(input, self.scale_factor).cuda())
                 else:
-                    x_ = Variable(utils.shave(target, border_size=6))
+                    x_ = Variable(utils.shave(target, border_size=8))
                     y_ = Variable(utils.img_interp(input, self.scale_factor))
 
                 # update network
@@ -140,9 +141,9 @@ class SRCNN(object):
             # prediction
             recon_imgs = self.model(Variable(utils.img_interp(test_input, self.scale_factor).cuda()))
             recon_img = recon_imgs[0].cpu().data
-            gt_img = utils.shave(test_target[0], border_size=6)
+            gt_img = utils.shave(test_target[0], border_size=8)
             lr_img = test_input[0]
-            bc_img = utils.shave(utils.img_interp(test_input[0], self.scale_factor), border_size=6)
+            bc_img = utils.shave(utils.img_interp(test_input[0], self.scale_factor), border_size=8)
 
             # calculate psnrs
             bc_psnr = utils.PSNR(bc_img, gt_img)
@@ -155,12 +156,16 @@ class SRCNN(object):
 
             print("Saving training result images at epoch %d" % (epoch + 1))
 
+            # Save trained parameters of model
+            if (epoch + 1) % self.save_epochs == 0:
+                self.save_model(epoch + 1)
+
         # Plot avg. loss
         utils.plot_loss([avg_loss], self.num_epochs, save_dir=self.save_dir)
         print("Training is finished.")
 
-        # Save trained parameters of model
-        self.save_model()
+        # Save final trained parameters of model
+        self.save_model(epoch=None)
 
     def test(self):
         # networks
@@ -191,9 +196,9 @@ class SRCNN(object):
             for i in range(self.test_batch_size):
                 img_num += 1
                 recon_img = recon_imgs[i].cpu().data
-                gt_img = utils.shave(target[i], border_size=6)
+                gt_img = utils.shave(target[i], border_size=8)
                 lr_img = input[i]
-                bc_img = utils.shave(utils.img_interp(input[i], self.scale_factor), border_size=6)
+                bc_img = utils.shave(utils.img_interp(input[i], self.scale_factor), border_size=8)
 
                 # calculate psnrs
                 bc_psnr = utils.PSNR(bc_img, gt_img)
@@ -206,12 +211,15 @@ class SRCNN(object):
 
                 print("Saving %d test result images..." % img_num)
 
-    def save_model(self):
+    def save_model(self, epoch=None):
         model_dir = os.path.join(self.save_dir, 'model')
         if not os.path.exists(model_dir):
             os.mkdir(model_dir)
+        if epoch is not None:
+            torch.save(self.model.state_dict(), model_dir + '/' + self.model_name + '_param_epoch_%d.pkl' % epoch)
+        else:
+            torch.save(self.model.state_dict(), model_dir + '/' + self.model_name + '_param.pkl')
 
-        torch.save(self.model.state_dict(), model_dir + '/' + self.model_name + '_param.pkl')
         print('Trained model is saved.')
 
     def load_model(self):

@@ -46,6 +46,7 @@ class VDSR(object):
         self.num_channels = args.num_channels
         self.scale_factor = args.scale_factor
         self.num_epochs = args.num_epochs
+        self.save_epochs = args.save_epochs
         self.batch_size = args.batch_size
         self.test_batch_size = args.test_batch_size
         self.lr = args.lr
@@ -174,12 +175,16 @@ class VDSR(object):
 
             print("Saving training result images at epoch %d" % (epoch + 1))
 
+            # Save trained parameters of model
+            if (epoch + 1) % self.save_epochs == 0:
+                self.save_model(epoch + 1)
+
         # Plot avg. loss
         utils.plot_loss([avg_loss], self.num_epochs, save_dir=self.save_dir)
         print("Training is finished.")
 
-        # Save trained parameters of model
-        self.save_model()
+        # Save final trained parameters of model
+        self.save_model(epoch=None)
 
     def test(self):
         # networks
@@ -225,12 +230,15 @@ class VDSR(object):
 
                 print("Saving %d test result images..." % img_num)
 
-    def save_model(self):
+    def save_model(self, epoch=None):
         model_dir = os.path.join(self.save_dir, 'model')
         if not os.path.exists(model_dir):
             os.mkdir(model_dir)
+        if epoch is not None:
+            torch.save(self.model.state_dict(), model_dir + '/' + self.model_name + '_param_epoch_%d.pkl' % epoch)
+        else:
+            torch.save(self.model.state_dict(), model_dir + '/' + self.model_name + '_param.pkl')
 
-        torch.save(self.model.state_dict(), model_dir + '/' + self.model_name + '_param.pkl')
         print('Trained model is saved.')
 
     def load_model(self):

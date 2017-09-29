@@ -209,9 +209,11 @@ def norm(img):
 
 
 def denorm(img):
-    transform = transforms.Normalize(mean=[-2.118, -2.036, -1.804],
-                                     std=[4.367, 4.464, 4.444])
-    return transform(img)
+    out = (img + 1) / 2
+    return out.clamp(0, 1)
+    # transform = transforms.Normalize(mean=[-2.118, -2.036, -1.804],
+    #                                  std=[4.367, 4.464, 4.444])
+    # return transform(img)
 
 
 def img_interp(imgs, scale_factor, interpolation='bicubic'):

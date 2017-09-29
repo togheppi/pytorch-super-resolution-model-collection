@@ -10,55 +10,25 @@ from logger import Logger
 
 
 class Net(torch.nn.Module):
-    def __init__(self, num_channels, base_filter, num_recursions):
+    def __init__(self, num_channels, base_filter, scale_factor):
         super(Net, self).__init__()
-        self.num_recursions = num_recursions
-        # embedding layer
-        self.embedding_layer = nn.Sequential(
-            ConvBlock(num_channels, base_filter, 3, 1, 1, norm=None),
-            ConvBlock(base_filter, base_filter, 3, 1, 1, norm=None)
+
+        self.layers = torch.nn.Sequential(
+            ConvBlock(num_channels, base_filter, 9, 1, 0, activation='tanh', norm=None),
+            ConvBlock(base_filter, base_filter // 2, 5, 1, 0, activation='tanh', norm=None),
+            PSBlock(base_filter // 2, num_channels, scale_factor, 5, 1, 0, activation=None, norm=None)
         )
-
-        # conv block of inference layer
-        self.conv_block = ConvBlock(base_filter, base_filter, 3, 1, 1, norm=None)
-
-        # reconstruction layer
-        self.reconstruction_layer = nn.Sequential(
-            ConvBlock(base_filter, base_filter, 3, 1, 1, activation=None, norm=None),
-            ConvBlock(base_filter, num_channels, 3, 1, 1, activation=None, norm=None)
-        )
-
-        # initial w
-        init_w = torch.ones(self.num_recursions) / self.num_recursions
-        self.w = Variable(init_w, requires_grad=True).cuda()
 
     def forward(self, x):
-        # embedding layer
-        h0 = self.embedding_layer(x)
-
-        # recursions
-        h = [h0]
-        for d in range(self.num_recursions):
-            h.append(self.conv_block(h[d]))
-
-        y_d_ = []
-        out_sum = 0
-        for d in range(self.num_recursions):
-            y_d_.append(self.reconstruction_layer(h[d+1]))
-            out_sum += torch.mul(y_d_[d], self.w[d].data[0])
-        out_sum = torch.mul(out_sum, torch.reciprocal(torch.sum(self.w)).data[0])
-
-        # skip connection
-        final_out = torch.add(out_sum, x)
-
-        return y_d_, final_out
+        out = self.layers(x)
+        return out
 
     def weight_init(self):
         for m in self.modules():
-            utils.weights_init_kaming(m)
+            utils.weights_init_normal(m)
 
 
-class DRCN(object):
+class ESPCN(object):
     def __init__(self, args):
         # parameters
         self.model_name = args.model_name
@@ -99,21 +69,13 @@ class DRCN(object):
 
     def train(self):
         # networks
-        self.num_recursions = 16
-        self.model = Net(num_channels=self.num_channels, base_filter=256, num_recursions=self.num_recursions)
+        self.model = Net(num_channels=self.num_channels, base_filter=64, scale_factor=self.scale_factor)
 
         # weigh initialization
         self.model.weight_init()
 
         # optimizer
-        self.momentum = 0.9
-        self.weight_decay = 0.0001
-        self.loss_alpha = 1.0
-        self.loss_alpha_zero_epoch = 25
-        self.loss_alpha_decay = self.loss_alpha / self.loss_alpha_zero_epoch
-        self.loss_beta = 0.001
-        self.optimizer = optim.SGD(self.model.parameters(),
-                                   lr=self.lr, momentum=self.momentum, weight_decay=self.weight_decay)
+        self.optimizer = optim.Adam(self.model.parameters(), lr=self.lr)
 
         # loss function
         if self.gpu_mode:
@@ -147,45 +109,21 @@ class DRCN(object):
         self.model.train()
         for epoch in range(self.num_epochs):
 
-            # learning rate is decayed by a factor of 10 every 20 epochs
-            if (epoch + 1) % 20 == 0:
-                for param_group in self.optimizer.param_groups:
-                    param_group["lr"] /= 10.0
-                print("Learning rate decay: lr={}".format(self.optimizer.param_groups[0]["lr"]))
-
-            # loss_alpha decayed to zero after 25 epochs
-            self.loss_alpha = max(0.0, self.loss_alpha - self.loss_alpha_decay)
-
             epoch_loss = 0
             for iter, (input, target) in enumerate(train_data_loader):
-                # input data (bicubic interpolated image)
+                # input data (low resolution image)
                 if self.gpu_mode:
-                    y = Variable(target.cuda())
-                    x = Variable(utils.img_interp(input, self.scale_factor).cuda())
+                    # exclude border pixels from loss computation
+                    x_ = Variable(utils.shave(target, border_size=8*self.scale_factor).cuda())
+                    y_ = Variable(input.cuda())
                 else:
-                    y = Variable(target)
-                    x = Variable(utils.img_interp(input, self.scale_factor))
+                    x_ = Variable(utils.shave(target, border_size=8*self.scale_factor))
+                    y_ = Variable(input)
 
                 # update network
                 self.optimizer.zero_grad()
-                y_d_, y_ = self.model(x)
-
-                # loss1
-                loss1 = 0
-                for d in range(self.num_recursions):
-                    loss1 += (self.MSE_loss(y_d_[d], y) / self.num_recursions)
-
-                # loss2
-                loss2 = self.MSE_loss(y_, y)
-
-                # regularization
-                reg_term = 0
-                for theta in self.model.parameters():
-                    reg_term += torch.mean(torch.sum(theta ** 2))
-
-                # total loss
-
-                loss = self.loss_alpha * loss1 + (1-self.loss_alpha) * loss2 + self.loss_beta * reg_term
+                recon_image = self.model(y_)
+                loss = self.MSE_loss(recon_image, x_)
                 loss.backward()
                 self.optimizer.step()
 
@@ -201,11 +139,11 @@ class DRCN(object):
             avg_loss.append(epoch_loss / len(train_data_loader))
 
             # prediction
-            _, recon_imgs = self.model(Variable(utils.img_interp(test_input, self.scale_factor).cuda()))
+            recon_imgs = self.model(Variable(test_input.cuda()))
             recon_img = recon_imgs[0].cpu().data
-            gt_img = test_target[0]
+            gt_img = utils.shave(test_target[0], border_size=8*self.scale_factor)
             lr_img = test_input[0]
-            bc_img = utils.img_interp(test_input[0], self.scale_factor)
+            bc_img = utils.shave(utils.img_interp(test_input[0], self.scale_factor), border_size=8*self.scale_factor)
 
             # calculate psnrs
             bc_psnr = utils.PSNR(bc_img, gt_img)
@@ -231,7 +169,7 @@ class DRCN(object):
 
     def test(self):
         # networks
-        self.model = Net(num_channels=self.num_channels, base_filter=64, num_recursions=self.num_recursions)
+        self.model = Net(num_channels=self.num_channels, base_filter=64, scale_factor=self.scale_factor)
 
         if self.gpu_mode:
             self.model.cuda()
@@ -247,20 +185,20 @@ class DRCN(object):
         img_num = 0
         self.model.eval()
         for input, target in test_data_loader:
-            # input data (bicubic interpolated image)
+            # input data (low resolution image)
             if self.gpu_mode:
-                y_ = Variable(utils.img_interp(input, self.scale_factor).cuda())
+                y_ = Variable(input.cuda())
             else:
-                y_ = Variable(utils.img_interp(input, self.scale_factor))
+                y_ = Variable(input)
 
             # prediction
-            _, recon_imgs = self.model(y_)
-            for i, recon_img in enumerate(recon_imgs):
+            recon_imgs = self.model(y_)
+            for i in range(self.test_batch_size):
                 img_num += 1
                 recon_img = recon_imgs[i].cpu().data
-                gt_img = target[i]
+                gt_img = utils.shave(target[i], border_size=8 * self.scale_factor)
                 lr_img = input[i]
-                bc_img = utils.img_interp(input[i], self.scale_factor)
+                bc_img = utils.shave(utils.img_interp(input[i], self.scale_factor), border_size=8 * self.scale_factor)
 
                 # calculate psnrs
                 bc_psnr = utils.PSNR(bc_img, gt_img)

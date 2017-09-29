@@ -99,6 +99,7 @@ class SRGAN(object):
         self.num_channels = args.num_channels
         self.scale_factor = args.scale_factor
         self.num_epochs = args.num_epochs
+        self.save_epochs = args.save_epochs
         self.batch_size = args.batch_size
         self.test_batch_size = args.test_batch_size
         self.lr = args.lr
@@ -329,12 +330,16 @@ class SRGAN(object):
 
             print("Saving training result images at epoch %d" % (epoch + 1))
 
+            # Save trained parameters of model
+            if (epoch + 1) % self.save_epochs == 0:
+                self.save_model(epoch + 1)
+
         # Plot avg. loss
         utils.plot_loss([G_avg_loss, D_avg_loss], self.num_epochs, save_dir=self.save_dir)
         print("Training is finished.")
 
-        # Save trained parameters of model
-        self.save_model()
+        # Save final trained parameters of model
+        self.save_model(epoch=None)
 
     def test(self):
         # networks
@@ -380,7 +385,7 @@ class SRGAN(object):
 
                 print("Saving %d test result images..." % img_num)
 
-    def save_model(self, is_pretrain=False):
+    def save_model(self, epoch=None, is_pretrain=False):
         model_dir = os.path.join(self.save_dir, 'model')
         if not os.path.exists(model_dir):
             os.mkdir(model_dir)
@@ -389,8 +394,12 @@ class SRGAN(object):
             torch.save(self.G.state_dict(), model_dir + '/' + self.model_name + '_G_param_pretrain.pkl')
             print('Pre-trained generator model is saved.')
         else:
-            torch.save(self.G.state_dict(), model_dir + '/' + self.model_name + '_G_param.pkl')
-            torch.save(self.D.state_dict(), model_dir + '/' + self.model_name + '_D_param.pkl')
+            if epoch is not None:
+                torch.save(self.G.state_dict(), model_dir + '/' + self.model_name + '_G_param_epoch_%d.pkl' % epoch)
+                torch.save(self.D.state_dict(), model_dir + '/' + self.model_name + '_D_param_epoch_%d.pkl' % epoch)
+            else:
+                torch.save(self.G.state_dict(), model_dir + '/' + self.model_name + '_G_param.pkl')
+                torch.save(self.D.state_dict(), model_dir + '/' + self.model_name + '_D_param.pkl')
             print('Trained models are saved.')
 
     def load_model(self, is_pretrain=False):
