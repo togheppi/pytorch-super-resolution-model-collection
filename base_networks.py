@@ -15,6 +15,8 @@ class DenseBlock(torch.nn.Module):
         self.activation = activation
         if self.activation == 'relu':
             self.act = torch.nn.ReLU(True)
+        elif self.activation == 'prelu':
+            self.act = torch.nn.PReLU()
         elif self.activation == 'lrelu':
             self.act = torch.nn.LeakyReLU(0.2, True)
         elif self.activation == 'tanh':
@@ -48,6 +50,8 @@ class ConvBlock(torch.nn.Module):
         self.activation = activation
         if self.activation == 'relu':
             self.act = torch.nn.ReLU(True)
+        elif self.activation == 'prelu':
+            self.act = torch.nn.PReLU()
         elif self.activation == 'lrelu':
             self.act = torch.nn.LeakyReLU(0.2, True)
         elif self.activation == 'tanh':
@@ -81,6 +85,8 @@ class DeconvBlock(torch.nn.Module):
         self.activation = activation
         if self.activation == 'relu':
             self.act = torch.nn.ReLU(True)
+        elif self.activation == 'prelu':
+            self.act = torch.nn.PReLU()
         elif self.activation == 'lrelu':
             self.act = torch.nn.LeakyReLU(0.2, True)
         elif self.activation == 'tanh':
@@ -115,6 +121,8 @@ class ResnetBlock(torch.nn.Module):
         self.activation = activation
         if self.activation == 'relu':
             self.act = torch.nn.ReLU(True)
+        elif self.activation == 'prelu':
+            self.act = torch.nn.PReLU()
         elif self.activation == 'lrelu':
             self.act = torch.nn.LeakyReLU(0.2, True)
         elif self.activation == 'tanh':
@@ -157,6 +165,8 @@ class PSBlock(torch.nn.Module):
         self.activation = activation
         if self.activation == 'relu':
             self.act = torch.nn.ReLU(True)
+        elif self.activation == 'prelu':
+            self.act = torch.nn.PReLU()
         elif self.activation == 'lrelu':
             self.act = torch.nn.LeakyReLU(0.2, True)
         elif self.activation == 'tanh':

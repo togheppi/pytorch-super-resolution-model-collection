@@ -113,10 +113,7 @@ class DRCN(object):
         self.loss_alpha_decay = self.loss_alpha / self.loss_alpha_zero_epoch
         self.loss_beta = 0.001
 
-        # initial w
-        # init_w = torch.ones(self.num_recursions) / self.num_recursions
-        # self.w_param = torch.nn.Parameter(init_w)
-        #
+        # learnable parameters
         param_groups = list(self.model.parameters())
         param_groups = [{'params': param_groups}]
         param_groups += [{'params': [self.model.w]}]
@@ -177,14 +174,6 @@ class DRCN(object):
                 self.optimizer.zero_grad()
                 y_d_, y_ = self.model(x)
 
-                # out_sum = 0
-                # for d in range(self.num_recursions):
-                #     out_sum += torch.mul(y_d_[d], self.w_param[d].data[0])
-                # out_sum = torch.mul(out_sum, 1.0 / (torch.sum(self.w_param)).data[0])
-
-                # skip connection
-                # y_ = torch.add(out_sum, x)
-
                 # loss1
                 loss1 = 0
                 for d in range(self.num_recursions):
@@ -203,8 +192,6 @@ class DRCN(object):
                 loss = self.loss_alpha * loss1 + (1-self.loss_alpha) * loss2 + self.loss_beta * reg_term
                 loss.backward()
                 self.optimizer.step()
-
-                print(self.model.w)
 
                 # log
                 epoch_loss += loss.data[0]
@@ -248,7 +235,8 @@ class DRCN(object):
 
     def test(self):
         # networks
-        self.model = Net(num_channels=self.num_channels, base_filter=64, num_recursions=self.num_recursions)
+        self.num_recursions = 16
+        self.model = Net(num_channels=self.num_channels, base_filter=256, num_recursions=self.num_recursions)
 
         if self.gpu_mode:
             self.model.cuda()
@@ -296,8 +284,10 @@ class DRCN(object):
             os.mkdir(model_dir)
         if epoch is not None:
             torch.save(self.model.state_dict(), model_dir + '/' + self.model_name + '_param_epoch_%d.pkl' % epoch)
+            torch.save(self.model.w, model_dir + '/' + self.model_name + '_w_epoch_%d.pkl' % epoch)
         else:
             torch.save(self.model.state_dict(), model_dir + '/' + self.model_name + '_param.pkl')
+            torch.save(self.model.w, model_dir + '/' + self.model_name + '_w.pkl')
 
         print('Trained model is saved.')
 
@@ -307,8 +297,13 @@ class DRCN(object):
         model_name = model_dir + '/' + self.model_name + '_param.pkl'
         if os.path.exists(model_name):
             self.model.load_state_dict(torch.load(model_name))
-            print('Trained generator model is loaded.')
-            return True
+            print('Trained model is loaded.')
         else:
             print('No model exists to load.')
-            return False
+
+        w_name = model_dir + '/' + self.model_name + '_w.pkl'
+        if os.path.exists(w_name):
+            self.model.w = torch.load(w_name)
+            print('Trained weight is loaded.')
+        else:
+            print('No weight exists to load.')

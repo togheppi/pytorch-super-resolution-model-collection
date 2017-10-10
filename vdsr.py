@@ -247,7 +247,7 @@ class VDSR(object):
         model_name = model_dir + '/' + self.model_name + '_param.pkl'
         if os.path.exists(model_name):
             self.model.load_state_dict(torch.load(model_name))
-            print('Trained generator model is loaded.')
+            print('Trained model is loaded.')
             return True
         else:
             print('No model exists to load.')

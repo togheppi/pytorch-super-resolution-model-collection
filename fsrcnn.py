@@ -10,17 +10,31 @@ from logger import Logger
 
 
 class Net(torch.nn.Module):
-    def __init__(self, num_channels, base_filter):
+    def __init__(self, num_channels, scale_factor, d, s, m):
         super(Net, self).__init__()
 
-        self.layers = torch.nn.Sequential(
-            ConvBlock(num_channels, base_filter, 9, 1, 0, norm=None),
-            ConvBlock(base_filter, base_filter // 2, 5, 1, 0, norm=None),
-            ConvBlock(base_filter // 2, num_channels, 5, 1, 0, activation=None, norm=None)
-        )
+        # Feature extraction
+        self.first_part = ConvBlock(num_channels, d, 5, 1, 2, activation='prelu', norm=None)
+
+        self.layers = []
+        # Shrinking
+        self.layers.append(ConvBlock(d, s, 1, 1, 0, activation='prelu', norm=None))
+        # Non-linear Mapping
+        for _ in range(m):
+            self.layers.append(ConvBlock(s, s, 3, 1, 1, activation=None, norm=None))
+        self.layers.append(nn.PReLU())
+        # Expanding
+        self.layers.append(ConvBlock(s, d, 1, 1, 0, activation='prelu', norm=None))
+
+        self.mid_part = torch.nn.Sequential(*self.layers)
+
+        # Deconvolution
+        self.last_part = DeconvBlock(d, 1, 8, scale_factor, (8-scale_factor)//2, activation=None, norm=None)
 
     def forward(self, x):
-        out = self.layers(x)
+        out = self.first_part(x)
+        out = self.mid_part(out)
+        out = self.last_part(out)
         return out
 
     def weight_init(self, mean=0.0, std=0.001):
@@ -28,7 +42,7 @@ class Net(torch.nn.Module):
             utils.weights_init_normal(m, mean=mean, std=std)
 
 
-class SRCNN(object):
+class FSRCNN(object):
     def __init__(self, args):
         # parameters
         self.model_name = args.model_name
@@ -69,13 +83,14 @@ class SRCNN(object):
 
     def train(self):
         # networks
-        self.model = Net(num_channels=self.num_channels, base_filter=64)
+        self.model = Net(num_channels=self.num_channels, scale_factor=self.scale_factor, d=56, s=12, m=4)
 
         # weigh initialization
         self.model.weight_init(mean=0.0, std=0.001)
 
         # optimizer
-        self.optimizer = optim.SGD(self.model.parameters(), lr=self.lr)
+        self.momentum = 0.9
+        self.optimizer = optim.SGD(self.model.parameters(), lr=self.lr, momentum=self.momentum)
 
         # loss function
         if self.gpu_mode:
@@ -111,14 +126,13 @@ class SRCNN(object):
 
             epoch_loss = 0
             for iter, (input, target) in enumerate(train_data_loader):
-                # input data (bicubic interpolated image)
+                # input data (low resolution image)
                 if self.gpu_mode:
-                    # exclude border pixels from loss computation
-                    x_ = Variable(utils.shave(target, border_size=8).cuda())
-                    y_ = Variable(utils.img_interp(input, self.scale_factor).cuda())
+                    x_ = Variable(target.cuda())
+                    y_ = Variable(input.cuda())
                 else:
-                    x_ = Variable(utils.shave(target, border_size=8))
-                    y_ = Variable(utils.img_interp(input, self.scale_factor))
+                    x_ = Variable(target)
+                    y_ = Variable(input)
 
                 # update network
                 self.optimizer.zero_grad()
@@ -139,11 +153,11 @@ class SRCNN(object):
             avg_loss.append(epoch_loss / len(train_data_loader))
 
             # prediction
-            recon_imgs = self.model(Variable(utils.img_interp(test_input, self.scale_factor).cuda()))
+            recon_imgs = self.model(Variable(test_input.cuda()))
             recon_img = recon_imgs[0].cpu().data
-            gt_img = utils.shave(test_target[0], border_size=8)
+            gt_img = test_target[0]
             lr_img = test_input[0]
-            bc_img = utils.shave(utils.img_interp(test_input[0], self.scale_factor), border_size=8)
+            bc_img = utils.img_interp(test_input[0], self.scale_factor)
 
             # calculate psnrs
             bc_psnr = utils.PSNR(bc_img, gt_img)
@@ -169,7 +183,7 @@ class SRCNN(object):
 
     def test(self):
         # networks
-        self.model = Net(num_channels=self.num_channels, base_filter=64)
+        self.model = Net(num_channels=self.num_channels, scale_factor=self.scale_factor, d=56, s=12, m=4)
 
         if self.gpu_mode:
             self.model.cuda()
@@ -185,20 +199,20 @@ class SRCNN(object):
         img_num = 0
         self.model.eval()
         for input, target in test_data_loader:
-            # input data (bicubic interpolated image)
+            # input data (low resolution image)
             if self.gpu_mode:
-                y_ = Variable(utils.img_interp(input, self.scale_factor).cuda())
+                y_ = Variable(input.cuda())
             else:
-                y_ = Variable(utils.img_interp(input, self.scale_factor))
+                y_ = Variable(input)
 
             # prediction
             recon_imgs = self.model(y_)
-            for i in range(self.test_batch_size):
+            for i, recon_img in enumerate(recon_imgs):
                 img_num += 1
                 recon_img = recon_imgs[i].cpu().data
-                gt_img = utils.shave(target[i], border_size=8)
+                gt_img = target[i]
                 lr_img = input[i]
-                bc_img = utils.shave(utils.img_interp(input[i], self.scale_factor), border_size=8)
+                bc_img = utils.img_interp(input[i], self.scale_factor)
 
                 # calculate psnrs
                 bc_psnr = utils.PSNR(bc_img, gt_img)
@@ -228,7 +242,7 @@ class SRCNN(object):
         model_name = model_dir + '/' + self.model_name + '_param.pkl'
         if os.path.exists(model_name):
             self.model.load_state_dict(torch.load(model_name))
-            print('Trained model is loaded.')
+            print('Trained generator model is loaded.')
             return True
         else:
             print('No model exists to load.')
