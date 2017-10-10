@@ -29,8 +29,8 @@ class Net(torch.nn.Module):
         )
 
         # initial w
-        init_w = torch.ones(self.num_recursions) / self.num_recursions
-        self.w = Variable(init_w, requires_grad=True).cuda()
+        self.w_init = torch.ones(self.num_recursions) / self.num_recursions
+        self.w = Variable(self.w_init.cuda(), requires_grad=True)
 
     def forward(self, x):
         # embedding layer
@@ -45,8 +45,8 @@ class Net(torch.nn.Module):
         out_sum = 0
         for d in range(self.num_recursions):
             y_d_.append(self.reconstruction_layer(h[d+1]))
-            out_sum += torch.mul(y_d_[d], self.w[d].data[0])
-        out_sum = torch.mul(out_sum, torch.reciprocal(torch.sum(self.w)).data[0])
+            out_sum += torch.mul(y_d_[d], self.w[d])
+        out_sum = torch.mul(out_sum, 1.0 / (torch.sum(self.w)))
 
         # skip connection
         final_out = torch.add(out_sum, x)
@@ -112,8 +112,15 @@ class DRCN(object):
         self.loss_alpha_zero_epoch = 25
         self.loss_alpha_decay = self.loss_alpha / self.loss_alpha_zero_epoch
         self.loss_beta = 0.001
-        self.optimizer = optim.SGD(self.model.parameters(),
-                                   lr=self.lr, momentum=self.momentum, weight_decay=self.weight_decay)
+
+        # initial w
+        # init_w = torch.ones(self.num_recursions) / self.num_recursions
+        # self.w_param = torch.nn.Parameter(init_w)
+        #
+        param_groups = list(self.model.parameters())
+        param_groups = [{'params': param_groups}]
+        param_groups += [{'params': [self.model.w]}]
+        self.optimizer = optim.SGD(param_groups, lr=self.lr, momentum=self.momentum, weight_decay=self.weight_decay)
 
         # loss function
         if self.gpu_mode:
@@ -170,6 +177,14 @@ class DRCN(object):
                 self.optimizer.zero_grad()
                 y_d_, y_ = self.model(x)
 
+                # out_sum = 0
+                # for d in range(self.num_recursions):
+                #     out_sum += torch.mul(y_d_[d], self.w_param[d].data[0])
+                # out_sum = torch.mul(out_sum, 1.0 / (torch.sum(self.w_param)).data[0])
+
+                # skip connection
+                # y_ = torch.add(out_sum, x)
+
                 # loss1
                 loss1 = 0
                 for d in range(self.num_recursions):
@@ -188,6 +203,8 @@ class DRCN(object):
                 loss = self.loss_alpha * loss1 + (1-self.loss_alpha) * loss2 + self.loss_beta * reg_term
                 loss.backward()
                 self.optimizer.step()
+
+                print(self.model.w)
 
                 # log
                 epoch_loss += loss.data[0]
