@@ -91,7 +91,7 @@ class DRCN(object):
                               shuffle=True)
         elif dataset == 'test':
             print('Loading test datasets...')
-            test_set = get_test_set(self.data_dir, self.test_dataset, self.crop_size, self.scale_factor, is_gray=is_gray,
+            test_set = get_test_set(self.data_dir, self.test_dataset, self.scale_factor, is_gray=is_gray,
                                     normalize=False)
             return DataLoader(dataset=test_set, num_workers=self.num_threads,
                               batch_size=self.test_batch_size,
@@ -146,7 +146,9 @@ class DRCN(object):
         step = 0
 
         # test image
-        test_input, test_target = test_data_loader.__iter__().__next__()
+        test_input, test_target = test_data_loader.dataset.__getitem__(2)
+        test_input = test_input.unsqueeze(0)
+        test_target = test_target.unsqueeze(0)
 
         self.model.train()
         for epoch in range(self.num_epochs):

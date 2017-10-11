@@ -14,7 +14,7 @@ class Net(torch.nn.Module):
         super(Net, self).__init__()
 
         # Feature extraction
-        self.first_part = ConvBlock(num_channels, d, 5, 1, 0, activation='prelu', norm=None)
+        self.first_part = ConvBlock(num_channels, d, 5, 1, 2, activation='prelu', norm=None)
 
         self.layers = []
         # Shrinking
@@ -29,7 +29,7 @@ class Net(torch.nn.Module):
         self.mid_part = torch.nn.Sequential(*self.layers)
 
         # Deconvolution
-        self.last_part = nn.ConvTranspose2d(d, num_channels, 9, scale_factor, 0, output_padding=1)
+        self.last_part = nn.ConvTranspose2d(d, num_channels, 9, scale_factor, 3, output_padding=1)
 
     def forward(self, x):
         out = self.first_part(x)
@@ -75,7 +75,7 @@ class FSRCNN(object):
                               shuffle=True)
         elif dataset == 'test':
             print('Loading test datasets...')
-            test_set = get_test_set(self.data_dir, self.test_dataset, self.crop_size, self.scale_factor, is_gray=is_gray,
+            test_set = get_test_set(self.data_dir, self.test_dataset, self.scale_factor, is_gray=is_gray,
                                     normalize=False)
             return DataLoader(dataset=test_set, num_workers=self.num_threads,
                               batch_size=self.test_batch_size,
@@ -119,7 +119,9 @@ class FSRCNN(object):
         step = 0
 
         # test image
-        test_input, test_target = test_data_loader.__iter__().__next__()
+        test_input, test_target = test_data_loader.dataset.__getitem__(2)
+        test_input = test_input.unsqueeze(0)
+        test_target = test_target.unsqueeze(0)
 
         self.model.train()
         for epoch in range(self.num_epochs):
