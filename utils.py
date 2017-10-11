@@ -225,18 +225,22 @@ def img_interp(imgs, scale_factor, interpolation='bicubic'):
         interpolation = Image.NEAREST
 
     size = list(imgs.shape)
+
     if len(size) == 4:
-        interp_imgs = torch.FloatTensor(size[0], size[1], size[2]*scale_factor, size[3]*scale_factor)
+        target_width = int(size[2] * scale_factor)
+        target_height = int(size[3] * scale_factor)
+        interp_imgs = torch.FloatTensor(size[0], size[1], target_width, target_height)
         for i, img in enumerate(imgs):
             transform = transforms.Compose([transforms.ToPILImage(),
-                                            transforms.Scale((size[2]*scale_factor, size[3]*scale_factor), interpolation=interpolation),
+                                            transforms.Scale((target_width, target_height), interpolation=interpolation),
                                             transforms.ToTensor()])
 
             interp_imgs[i, :, :, :] = transform(img)
         return interp_imgs
     else:
+        target_width = int(size[1] * scale_factor)
+        target_height = int(size[2] * scale_factor)
         transform = transforms.Compose([transforms.ToPILImage(),
-                                        transforms.Scale((size[1] * scale_factor, size[2] * scale_factor),
-                                                         interpolation=interpolation),
+                                        transforms.Scale((target_width, target_height), interpolation=interpolation),
                                         transforms.ToTensor()])
         return transform(imgs)
