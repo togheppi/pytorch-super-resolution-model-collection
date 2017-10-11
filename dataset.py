@@ -17,23 +17,19 @@ def load_img(filepath):
 
 class DatasetFromFolder(data.Dataset):
     def __init__(self, image_dirs, is_gray=False, random_scale=True, crop_size=None, rotate=True, fliplr=True, fliptb=True,
-                 input_transform=None, target_transform=None):
+                 scale_factor=4, normalize=False):
         super(DatasetFromFolder, self).__init__()
-        if len(image_dirs) == 1:
-            self.image_filenames = [join(image_dirs[0], x) for x in listdir(image_dirs[0]) if is_image_file(x)]
-        else:
-            self.image_filenames = []
-            for image_dir in image_dirs:
-                self.image_filenames.extend(join(image_dir, x) for x in listdir(image_dir) if is_image_file(x))
+        self.image_filenames = []
+        for image_dir in image_dirs:
+            self.image_filenames.extend(join(image_dir, x) for x in listdir(image_dir) if is_image_file(x))
         self.is_gray = is_gray
         self.random_scale = random_scale
         self.crop_size = crop_size
         self.rotate = rotate
         self.fliplr = fliplr
         self.fliptb = fliptb
-
-        self.input_transform = input_transform
-        self.target_transform = target_transform
+        self.scale_factor = scale_factor
+        self.normalize = normalize
 
     def __getitem__(self, index):
         input = load_img(self.image_filenames[index])
@@ -80,10 +76,24 @@ class DatasetFromFolder(data.Dataset):
 
         target = input.copy()
 
-        if self.input_transform is not None:
-            input = self.input_transform(input)
-        if self.target_transform is not None:
-            target = self.target_transform(target)
+        if self.crop_size is not None:
+            scale_w = self.crop_size // self.scale_factor
+            scale_h = self.crop_size // self.scale_factor
+        else:
+            scale_w = w // self.scale_factor
+            scale_h = h // self.scale_factor
+
+        input_transform = Compose([Scale((scale_w, scale_h), interpolation=Image.BICUBIC), ToTensor()])
+        input = input_transform(input)
+
+        target_transform = ToTensor()
+        target = target_transform(target)
+
+        # normalize (-1, 1)
+        if self.normalize:
+            transform = Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
+            input = transform(input)
+            target = transform(target)
 
         return input, target
 

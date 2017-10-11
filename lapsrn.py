@@ -117,7 +117,7 @@ class LapSRN(object):
                               shuffle=True)
         elif dataset == 'test':
             print('Loading test datasets...')
-            test_set = get_test_set(self.data_dir, self.test_dataset, self.crop_size, self.scale_factor, is_gray=is_gray,
+            test_set = get_test_set(self.data_dir, self.test_dataset, self.scale_factor, is_gray=is_gray,
                                     normalize=False)
             return DataLoader(dataset=test_set, num_workers=self.num_threads,
                               batch_size=self.test_batch_size,
@@ -160,14 +160,16 @@ class LapSRN(object):
         avg_loss = []
         step = 0
 
-        # test image
-        test_input, test_target = test_data_loader.__iter__().__next__()
+        # test image (
+        test_input, test_target = test_data_loader.dataset.__getitem__(2)
+        test_input = test_input.unsqueeze(0)
+        test_target = test_target.unsqueeze(0)
 
         self.model.train()
         for epoch in range(self.num_epochs):
 
-            # learning rate is decayed by a factor of 10 every 100 epochs
-            if (epoch+1) % 100 == 0:
+            # learning rate is decayed by a factor of 10 every 10 epochs
+            if (epoch+1) % 10 == 0:
                 for param_group in self.optimizer.param_groups:
                     param_group["lr"] /= 10.0
                 print("Learning rate decay: lr={}".format(self.optimizer.param_groups[0]["lr"]))

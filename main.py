@@ -28,7 +28,7 @@ def parse_args():
     parser.add_argument('--num_epochs', type=int, default=100, help='The number of epochs to run')
     parser.add_argument('--save_epochs', type=int, default=10, help='Save trained model every this epochs')
     parser.add_argument('--batch_size', type=int, default=64, help='training batch size')
-    parser.add_argument('--test_batch_size', type=int, default=5, help='testing batch size')
+    parser.add_argument('--test_batch_size', type=int, default=1, help='testing batch size')
     parser.add_argument('--save_dir', type=str, default='Result', help='Directory name to save the results')
     parser.add_argument('--lr', type=float, default=0.001)
     parser.add_argument('--gpu_mode', type=bool, default=True)
