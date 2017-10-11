@@ -71,35 +71,45 @@ def target_transform(normalize=False):
     return Compose(transforms)
 
 
-def get_training_set(data_dir, dataset, crop_size, scale_factor, is_gray=False, normalize=False):
-    if dataset == 'bsds300':
-        root_dir = download_bsds300(data_dir)
-        train_dir = join(root_dir, "train")
-    else:
-        train_dir = join(data_dir, dataset)
+def get_training_set(data_dir, datasets, crop_size, scale_factor, is_gray=False, normalize=False):
+    train_dir = []
+    for dataset in datasets:
+        if dataset == 'bsds300':
+            root_dir = download_bsds300(data_dir)
+            train_dir.append(join(root_dir, "train"))
+        else:
+            train_dir.append(join(data_dir, dataset))
 
-    crop_size = determine_crop_size(dataset, crop_size, scale_factor)
+        # crop_size = determine_crop_size(dataset, crop_size, scale_factor)
 
     return DatasetFromFolder(train_dir,
                              is_gray=is_gray,
-                             crop_size=crop_size,   # center crop
-                             fliplr=True,           # random flip
+                             random_scale=True,    # random scaling
+                             crop_size=crop_size,  # random crop
+                             rotate=True,          # random rotate
+                             fliplr=True,          # random flip
+                             fliptb=True,
                              input_transform=input_transform(crop_size, scale_factor, normalize=normalize),
                              target_transform=target_transform(normalize=normalize))
 
 
-def get_test_set(data_dir, dataset, crop_size, scale_factor, is_gray=False, normalize=False):
-    if dataset == 'bsds300':
-        root_dir = download_bsds300(data_dir)
-        test_dir = join(root_dir, "test")
-    else:
-        test_dir = join(data_dir, dataset)
+def get_test_set(data_dir, datasets, crop_size, scale_factor, is_gray=False, normalize=False):
+    test_dir = []
+    for dataset in datasets:
+        if dataset == 'bsds300':
+            root_dir = download_bsds300(data_dir)
+            test_dir.append(join(root_dir, "test"))
+        else:
+            test_dir.append(join(data_dir, dataset))
 
-    crop_size = determine_crop_size(dataset, crop_size, scale_factor)
+        # crop_size = determine_crop_size(dataset, crop_size, scale_factor)
 
     return DatasetFromFolder(test_dir,
                              is_gray=is_gray,
-                             crop_size=crop_size,   # center crop
+                             random_scale=False,    # No scaling
+                             crop_size=crop_size,   # random crop
+                             rotate=False,          # No rotate
                              fliplr=False,          # No flip
+                             fliptb=False,
                              input_transform=input_transform(crop_size, scale_factor, normalize=normalize),
                              target_transform=target_transform(normalize=normalize))

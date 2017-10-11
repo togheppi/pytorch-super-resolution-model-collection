@@ -80,7 +80,7 @@ class L1_Charbonnier_loss(torch.nn.Module):
     def forward(self, x, y):
         diff = torch.add(x, -y)
         error = torch.sqrt(diff * diff + self.eps)
-        loss = torch.sum(error)
+        loss = torch.mean(error)
         return loss
 
 
