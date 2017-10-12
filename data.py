@@ -56,6 +56,8 @@ def get_test_set(data_dir, datasets, scale_factor, is_gray=False, normalize=Fals
         if dataset == 'bsds300':
             root_dir = download_bsds300(data_dir)
             test_dir.append(join(root_dir, "test"))
+        elif dataset == 'DIV2K':
+            test_dir.append(join(data_dir, dataset, 'DIV2K_train_LR_bicubic/X4'))
         else:
             test_dir.append(join(data_dir, dataset))
 
