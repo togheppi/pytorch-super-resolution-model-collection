@@ -7,6 +7,7 @@ from torch.utils.data import DataLoader
 from data import get_training_set, get_test_set
 import utils
 from logger import Logger
+from torchvision.transforms import *
 
 
 class Net(torch.nn.Module):
@@ -14,9 +15,9 @@ class Net(torch.nn.Module):
         super(Net, self).__init__()
 
         self.layers = torch.nn.Sequential(
-            ConvBlock(num_channels, base_filter, 9, 1, 0, activation='tanh', norm=None),
-            ConvBlock(base_filter, base_filter // 2, 5, 1, 0, activation='tanh', norm=None),
-            PSBlock(base_filter // 2, num_channels, scale_factor, 5, 1, 0, activation=None, norm=None)
+            ConvBlock(num_channels, base_filter, 5, 1, 0, activation='relu', norm=None),
+            ConvBlock(base_filter, base_filter // 2, 3, 1, 0, activation='relu', norm=None),
+            PSBlock(base_filter // 2, num_channels, scale_factor, 3, 1, 0, activation=None, norm=None)
         )
 
     def forward(self, x):
@@ -144,7 +145,7 @@ class ESPCN(object):
             recon_imgs = self.model(Variable(test_input.cuda()))
             recon_img = recon_imgs[0].cpu().data
             gt_img = utils.shave(test_target[0], border_size=8*self.scale_factor)
-            lr_img = test_input[0]
+            lr_img = utils.shave(test_input[0], border_size=8)
             bc_img = utils.shave(utils.img_interp(test_input[0], self.scale_factor), border_size=8*self.scale_factor)
 
             # calculate psnrs
@@ -199,7 +200,7 @@ class ESPCN(object):
                 img_num += 1
                 recon_img = recon_imgs[i].cpu().data
                 gt_img = utils.shave(target[i], border_size=8 * self.scale_factor)
-                lr_img = input[i]
+                lr_img = utils.shave(input[i], border_size=8)
                 bc_img = utils.shave(utils.img_interp(input[i], self.scale_factor), border_size=8 * self.scale_factor)
 
                 # calculate psnrs
@@ -212,6 +213,49 @@ class ESPCN(object):
                 utils.plot_test_result(result_imgs, psnrs, img_num, save_dir=self.save_dir)
 
                 print("Saving %d test result images..." % img_num)
+
+    def test_single(self, img_fn):
+        # networks
+        self.model = Net(num_channels=self.num_channels, base_filter=64, scale_factor=self.scale_factor)
+
+        if self.gpu_mode:
+            self.model.cuda()
+
+        # load model
+        self.load_model()
+
+        # load data
+        img = Image.open(img_fn)
+        img = img.convert('YCbCr')
+        y, cb, cr = img.split()
+
+        input = Variable(ToTensor()(y)).view(1, -1, y.size[1], y.size[0])
+        if self.gpu_mode:
+            input = input.cuda()
+
+        self.model.eval()
+        recon_img = self.model(input)
+
+        # save result images
+        utils.save_img(recon_img.cpu().data, 1, save_dir=self.save_dir)
+
+        out = recon_img.cpu()
+        out_img_y = out.data[0]
+        out_img_y = (((out_img_y - out_img_y.min()) * 255) / (out_img_y.max() - out_img_y.min())).numpy()
+        # out_img_y *= 255.0
+        # out_img_y = out_img_y.clip(0, 255)
+        out_img_y = Image.fromarray(np.uint8(out_img_y[0]), mode='L')
+
+        out_img_cb = cb.resize(out_img_y.size, Image.BICUBIC)
+        out_img_cr = cr.resize(out_img_y.size, Image.BICUBIC)
+        out_img = Image.merge('YCbCr', [out_img_y, out_img_cb, out_img_cr]).convert('RGB')
+
+        # save img
+        result_dir = os.path.join(self.save_dir, 'result')
+        if not os.path.exists(result_dir):
+            os.mkdir(result_dir)
+        save_fn = result_dir + '/SR_result.png'
+        out_img.save(save_fn)
 
     def save_model(self, epoch=None):
         model_dir = os.path.join(self.save_dir, 'model')

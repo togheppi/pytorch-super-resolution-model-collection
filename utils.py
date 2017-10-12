@@ -7,6 +7,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import os
 import imageio
+from scipy.misc import imsave
 # from edge_detector import edge_detect
 
 
@@ -113,6 +114,25 @@ def weights_init_kaming(m):
             m.bias.data.zero_()
 
 
+def save_img(img, img_num, save_dir='', is_training=False):
+    # img.clamp(0, 1)
+    if list(img.shape)[0] == 3:
+        # img = (img * 255).numpy().transpose(1, 2, 0).astype(np.uint8)
+        img = (((img - img.min()) * 255) / (img.max() - img.min())).numpy().transpose(1, 2, 0).astype(np.uint8)
+    else:
+        img = img.squeeze().numpy()
+
+    # save img
+    result_dir = os.path.join(save_dir, 'result')
+    if not os.path.exists(result_dir):
+        os.mkdir(result_dir)
+    if is_training:
+        save_fn = result_dir + '/SR_result_epoch_{:d}'.format(img_num) + '.png'
+    else:
+        save_fn = result_dir + '/SR_result_{:d}'.format(img_num) + '.png'
+    imsave(save_fn, img)
+
+
 def plot_test_result(imgs, psnrs, img_num, save_dir='', is_training=False, show_label=True, show=False):
     size = list(imgs[0].shape)
     if show_label:
@@ -129,10 +149,10 @@ def plot_test_result(imgs, psnrs, img_num, save_dir='', is_training=False, show_
         ax.set_adjustable('box-forced')
         if list(img.shape)[0] == 3:
             # Scale to 0-255
-            if i < len(imgs) - 1:
-                img = (img * 255).numpy().transpose(1, 2, 0).astype(np.uint8)
-            else:
-                img = (((img - img.min()) * 255) / (img.max() - img.min())).numpy().transpose(1, 2, 0).astype(np.uint8)
+            # if i < len(imgs) - 1:
+            #     img = (img * 255).numpy().transpose(1, 2, 0).astype(np.uint8)
+            # else:
+            img = (((img - img.min()) * 255) / (img.max() - img.min())).numpy().transpose(1, 2, 0).astype(np.uint8)
                 # img = img.numpy().astype(np.float32)
                 #
                 # img = img * 255.
@@ -142,6 +162,8 @@ def plot_test_result(imgs, psnrs, img_num, save_dir='', is_training=False, show_
 
             ax.imshow(img, cmap=None, aspect='equal')
         else:
+            # img.clamp(0, 1)
+            # img = ((img - img.min()) / (img.max() - img.min())).numpy().transpose(1, 2, 0)
             img = img.squeeze().numpy()
             ax.imshow(img, cmap='gray', aspect='equal')
 
@@ -193,6 +215,8 @@ def shave(imgs, border_size=0):
 
 
 def PSNR(pred, gt):
+    pred = (pred - pred.min()) / (pred.max() - pred.min())
+
     diff = pred - gt
     mse = np.mean(diff.numpy() ** 2)
     if mse == 0:

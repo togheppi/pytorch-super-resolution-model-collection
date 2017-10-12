@@ -7,6 +7,7 @@ from torch.utils.data import DataLoader
 from data import get_training_set, get_test_set
 import utils
 from logger import Logger
+from torchvision.transforms import *
 
 
 class Net(torch.nn.Module):
@@ -14,7 +15,7 @@ class Net(torch.nn.Module):
         super(Net, self).__init__()
 
         # Feature extraction
-        self.first_part = ConvBlock(num_channels, d, 5, 1, 2, activation='prelu', norm=None)
+        self.first_part = ConvBlock(num_channels, d, 5, 1, 0, activation='prelu', norm=None)
 
         self.layers = []
         # Shrinking
@@ -30,6 +31,10 @@ class Net(torch.nn.Module):
 
         # Deconvolution
         self.last_part = nn.ConvTranspose2d(d, num_channels, 9, scale_factor, 3, output_padding=1)
+        # self.last_part = torch.nn.Sequential(
+        #     Upsample2xBlock(d, d, upsample='rnc', activation=None, norm=None),
+        #     Upsample2xBlock(d, num_channels, upsample='rnc', activation=None, norm=None)
+        # )
 
     def forward(self, x):
         out = self.first_part(x)
@@ -37,9 +42,17 @@ class Net(torch.nn.Module):
         out = self.last_part(out)
         return out
 
-    def weight_init(self, mean=0.0, std=0.001):
+    def weight_init(self, mean=0.0, std=0.02):
         for m in self.modules():
-            utils.weights_init_normal(m, mean=mean, std=std)
+            # utils.weights_init_normal(m, mean=mean, std=std)
+            if isinstance(m, nn.Conv2d):
+                m.weight.data.normal_(mean, std)
+                if m.bias is not None:
+                    m.bias.data.zero_()
+            if isinstance(m, nn.ConvTranspose2d):
+                m.weight.data.normal_(0.0, 0.0001)
+                if m.bias is not None:
+                    m.bias.data.zero_()
 
 
 class FSRCNN(object):
@@ -86,7 +99,7 @@ class FSRCNN(object):
         self.model = Net(num_channels=self.num_channels, scale_factor=self.scale_factor, d=56, s=12, m=4)
 
         # weigh initialization
-        self.model.weight_init(mean=0.0, std=0.001)
+        self.model.weight_init(mean=0.0, std=0.02)
 
         # optimizer
         self.momentum = 0.9
@@ -130,10 +143,10 @@ class FSRCNN(object):
             for iter, (input, target) in enumerate(train_data_loader):
                 # input data (low resolution image)
                 if self.gpu_mode:
-                    x_ = Variable(target.cuda())
+                    x_ = Variable(utils.shave(target, border_size=2*self.scale_factor).cuda())
                     y_ = Variable(input.cuda())
                 else:
-                    x_ = Variable(target)
+                    x_ = Variable(utils.shave(target, border_size=2*self.scale_factor))
                     y_ = Variable(input)
 
                 # update network
@@ -157,9 +170,9 @@ class FSRCNN(object):
             # prediction
             recon_imgs = self.model(Variable(test_input.cuda()))
             recon_img = recon_imgs[0].cpu().data
-            gt_img = test_target[0]
-            lr_img = test_input[0]
-            bc_img = utils.img_interp(test_input[0], self.scale_factor)
+            gt_img = utils.shave(test_target[0], border_size=2 * self.scale_factor)
+            lr_img = utils.shave(test_input[0], border_size=2)
+            bc_img = utils.shave(utils.img_interp(test_input[0], self.scale_factor), border_size=2 * self.scale_factor)
 
             # calculate psnrs
             bc_psnr = utils.PSNR(bc_img, gt_img)
@@ -212,9 +225,9 @@ class FSRCNN(object):
             for i, recon_img in enumerate(recon_imgs):
                 img_num += 1
                 recon_img = recon_imgs[i].cpu().data
-                gt_img = target[i]
-                lr_img = input[i]
-                bc_img = utils.img_interp(input[i], self.scale_factor)
+                gt_img = utils.shave(target[i], border_size=2 * self.scale_factor)
+                lr_img = utils.shave(input[i], border_size=2)
+                bc_img = utils.shave(utils.img_interp(input[i], self.scale_factor), border_size=2 * self.scale_factor)
 
                 # calculate psnrs
                 bc_psnr = utils.PSNR(bc_img, gt_img)
@@ -226,6 +239,49 @@ class FSRCNN(object):
                 utils.plot_test_result(result_imgs, psnrs, img_num, save_dir=self.save_dir)
 
                 print("Saving %d test result images..." % img_num)
+
+    def test_single(self, img_fn):
+        # networks
+        self.model = Net(num_channels=self.num_channels, scale_factor=self.scale_factor, d=56, s=12, m=4)
+
+        if self.gpu_mode:
+            self.model.cuda()
+
+        # load model
+        self.load_model()
+
+        # load data
+        img = Image.open(img_fn)
+        img = img.convert('YCbCr')
+        y, cb, cr = img.split()
+
+        input = Variable(ToTensor()(y)).view(1, -1, y.size[1], y.size[0])
+        if self.gpu_mode:
+            input = input.cuda()
+
+        self.model.eval()
+        recon_img = self.model(input)
+
+        # save result images
+        utils.save_img(recon_img.cpu().data, 1, save_dir=self.save_dir)
+
+        out = recon_img.cpu()
+        out_img_y = out.data[0]
+        out_img_y = (((out_img_y - out_img_y.min()) * 255) / (out_img_y.max() - out_img_y.min())).numpy()
+        # out_img_y *= 255.0
+        # out_img_y = out_img_y.clip(0, 255)
+        out_img_y = Image.fromarray(np.uint8(out_img_y[0]), mode='L')
+
+        out_img_cb = cb.resize(out_img_y.size, Image.BICUBIC)
+        out_img_cr = cr.resize(out_img_y.size, Image.BICUBIC)
+        out_img = Image.merge('YCbCr', [out_img_y, out_img_cb, out_img_cr]).convert('RGB')
+
+        # save img
+        result_dir = os.path.join(self.save_dir, 'result')
+        if not os.path.exists(result_dir):
+            os.mkdir(result_dir)
+        save_fn = result_dir + '/SR_result.png'
+        out_img.save(save_fn)
 
     def save_model(self, epoch=None):
         model_dir = os.path.join(self.save_dir, 'model')

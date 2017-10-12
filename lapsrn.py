@@ -8,6 +8,7 @@ from torchvision.transforms import *
 from data import get_training_set, get_test_set
 import utils
 from logger import Logger
+from torchvision.transforms import *
 
 
 def get_upsample_filter(size):
@@ -280,6 +281,49 @@ class LapSRN(object):
                 utils.plot_test_result(result_imgs, psnrs, img_num, save_dir=self.save_dir)
 
                 print("Saving %d test result images..." % img_num)
+
+    def test_single(self, img_fn):
+        # networks
+        self.model = Net(num_channels=self.num_channels, base_filter=64, num_convs=10)
+
+        if self.gpu_mode:
+            self.model.cuda()
+
+        # load model
+        self.load_model()
+
+        # load data
+        img = Image.open(img_fn)
+        img = img.convert('YCbCr')
+        y, cb, cr = img.split()
+
+        input = Variable(ToTensor()(y)).view(1, -1, y.size[1], y.size[0])
+        if self.gpu_mode:
+            input = input.cuda()
+
+        self.model.eval()
+        recon_img = self.model(input)
+
+        # save result images
+        utils.save_img(recon_img.cpu().data, 1, save_dir=self.save_dir)
+
+        out = recon_img.cpu()
+        out_img_y = out.data[0]
+        out_img_y = (((out_img_y - out_img_y.min()) * 255) / (out_img_y.max() - out_img_y.min())).numpy()
+        # out_img_y *= 255.0
+        # out_img_y = out_img_y.clip(0, 255)
+        out_img_y = Image.fromarray(np.uint8(out_img_y[0]), mode='L')
+
+        out_img_cb = cb.resize(out_img_y.size, Image.BICUBIC)
+        out_img_cr = cr.resize(out_img_y.size, Image.BICUBIC)
+        out_img = Image.merge('YCbCr', [out_img_y, out_img_cb, out_img_cr]).convert('RGB')
+
+        # save img
+        result_dir = os.path.join(self.save_dir, 'result')
+        if not os.path.exists(result_dir):
+            os.mkdir(result_dir)
+        save_fn = result_dir + '/SR_result.png'
+        out_img.save(save_fn)
 
     def save_model(self, epoch=None):
         model_dir = os.path.join(self.save_dir, 'model')
