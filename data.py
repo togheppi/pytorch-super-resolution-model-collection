@@ -36,6 +36,8 @@ def get_training_set(data_dir, datasets, crop_size, scale_factor, is_gray=False,
         if dataset == 'bsds300':
             root_dir = download_bsds300(data_dir)
             train_dir.append(join(root_dir, "train"))
+        elif dataset == 'DIV2K':
+            train_dir.append(join(data_dir, dataset, 'DIV2K_train_LR_bicubic/X4'))
         else:
             train_dir.append(join(data_dir, dataset))
 
@@ -57,7 +59,7 @@ def get_test_set(data_dir, datasets, scale_factor, is_gray=False, normalize=Fals
             root_dir = download_bsds300(data_dir)
             test_dir.append(join(root_dir, "test"))
         elif dataset == 'DIV2K':
-            test_dir.append(join(data_dir, dataset, 'DIV2K_train_LR_bicubic/X4'))
+            test_dir.append(join(data_dir, dataset, 'DIV2K_test_LR_bicubic/X4'))
         else:
             test_dir.append(join(data_dir, dataset))
 
