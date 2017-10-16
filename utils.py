@@ -49,12 +49,11 @@ def plot_loss(avg_losses, num_epochs, save_dir='', show=False):
     plt.legend()
 
     # save figure
-    result_dir = os.path.join(save_dir, 'result')
-    if not os.path.exists(result_dir):
-        os.mkdir(result_dir)
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
 
     save_fn = 'Loss_values_epoch_{:d}'.format(num_epochs) + '.png'
-    save_fn = os.path.join(result_dir, save_fn)
+    save_fn = os.path.join(save_dir, save_fn)
     plt.savefig(save_fn)
 
     if show:
@@ -117,20 +116,20 @@ def weights_init_kaming(m):
 def save_img(img, img_num, save_dir='', is_training=False):
     # img.clamp(0, 1)
     if list(img.shape)[0] == 3:
-        # img = (img * 255).numpy().transpose(1, 2, 0).astype(np.uint8)
-        img = (((img - img.min()) * 255) / (img.max() - img.min())).numpy().transpose(1, 2, 0).astype(np.uint8)
+        save_img = img*255.0
+        save_img = save_img.clamp(0, 255).numpy().transpose(1, 2, 0).astype(np.uint8)
+        # img = (((img - img.min()) * 255) / (img.max() - img.min())).numpy().transpose(1, 2, 0).astype(np.uint8)
     else:
-        img = img.squeeze().numpy()
+        save_img = img.squeeze().clamp(0, 1).numpy()
 
     # save img
-    result_dir = os.path.join(save_dir, 'result')
-    if not os.path.exists(result_dir):
-        os.mkdir(result_dir)
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
     if is_training:
-        save_fn = result_dir + '/SR_result_epoch_{:d}'.format(img_num) + '.png'
+        save_fn = save_dir + '/SR_result_epoch_{:d}'.format(img_num) + '.png'
     else:
-        save_fn = result_dir + '/SR_result_{:d}'.format(img_num) + '.png'
-    imsave(save_fn, img)
+        save_fn = save_dir + '/SR_result_{:d}'.format(img_num) + '.png'
+    imsave(save_fn, save_img)
 
 
 def plot_test_result(imgs, psnrs, img_num, save_dir='', is_training=False, show_label=True, show=False):
@@ -149,22 +148,14 @@ def plot_test_result(imgs, psnrs, img_num, save_dir='', is_training=False, show_
         ax.set_adjustable('box-forced')
         if list(img.shape)[0] == 3:
             # Scale to 0-255
-            # if i < len(imgs) - 1:
-            #     img = (img * 255).numpy().transpose(1, 2, 0).astype(np.uint8)
-            # else:
-            img = (((img - img.min()) * 255) / (img.max() - img.min())).numpy().transpose(1, 2, 0).astype(np.uint8)
-                # img = img.numpy().astype(np.float32)
-                #
-                # img = img * 255.
-                # img[img < 0] = 0
-                # img[img > 255.] = 255.
-                # img = img.transpose(1, 2, 0)
+            # img = (((img - img.min()) * 255) / (img.max() - img.min())).numpy().transpose(1, 2, 0).astype(np.uint8)
+            img *= 255.0
+            img = img.clamp(0, 255).numpy().transpose(1, 2, 0).astype(np.uint8)
 
             ax.imshow(img, cmap=None, aspect='equal')
         else:
-            # img.clamp(0, 1)
             # img = ((img - img.min()) / (img.max() - img.min())).numpy().transpose(1, 2, 0)
-            img = img.squeeze().numpy()
+            img = img.squeeze().clamp(0, 1).numpy()
             ax.imshow(img, cmap='gray', aspect='equal')
 
         if show_label:
@@ -188,9 +179,9 @@ def plot_test_result(imgs, psnrs, img_num, save_dir='', is_training=False, show_
         plt.subplots_adjust(left=0)
 
     # save figure
-    result_dir = os.path.join(save_dir, 'result')
+    result_dir = os.path.join(save_dir, 'plot')
     if not os.path.exists(result_dir):
-        os.mkdir(result_dir)
+        os.makedirs(result_dir)
     if is_training:
         save_fn = result_dir + '/Train_result_epoch_{:d}'.format(img_num) + '.png'
     else:
@@ -215,7 +206,8 @@ def shave(imgs, border_size=0):
 
 
 def PSNR(pred, gt):
-    pred = (pred - pred.min()) / (pred.max() - pred.min())
+    pred = pred.clamp(0, 1)
+    # pred = (pred - pred.min()) / (pred.max() - pred.min())
 
     diff = pred - gt
     mse = np.mean(diff.numpy() ** 2)
@@ -251,9 +243,9 @@ def img_interp(imgs, scale_factor, interpolation='bicubic'):
     size = list(imgs.shape)
 
     if len(size) == 4:
-        target_width = int(size[3] * scale_factor)
         target_height = int(size[2] * scale_factor)
-        interp_imgs = torch.FloatTensor(size[0], size[1], target_width, target_height)
+        target_width = int(size[3] * scale_factor)
+        interp_imgs = torch.FloatTensor(size[0], size[1], target_height, target_width)
         for i, img in enumerate(imgs):
             transform = transforms.Compose([transforms.ToPILImage(),
                                             transforms.Scale((target_width, target_height), interpolation=interpolation),
@@ -262,8 +254,8 @@ def img_interp(imgs, scale_factor, interpolation='bicubic'):
             interp_imgs[i, :, :, :] = transform(img)
         return interp_imgs
     else:
-        target_width = int(size[2] * scale_factor)
         target_height = int(size[1] * scale_factor)
+        target_width = int(size[2] * scale_factor)
         transform = transforms.Compose([transforms.ToPILImage(),
                                         transforms.Scale((target_width, target_height), interpolation=interpolation),
                                         transforms.ToTensor()])

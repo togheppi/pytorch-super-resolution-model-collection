@@ -15,13 +15,18 @@ def load_img(filepath):
     return img
 
 
-class DatasetFromFolder(data.Dataset):
-    def __init__(self, image_dirs, is_gray=False, random_scale=True, crop_size=None, rotate=True, fliplr=True, fliptb=True,
-                 scale_factor=4, normalize=False):
-        super(DatasetFromFolder, self).__init__()
+def calculate_valid_crop_size(crop_size, scale_factor):
+    return crop_size - (crop_size % scale_factor)
+
+
+class TrainDatasetFromFolder(data.Dataset):
+    def __init__(self, image_dirs, is_gray=False, random_scale=True, crop_size=128, rotate=True, fliplr=True,
+                 fliptb=True, scale_factor=4):
+        super(TrainDatasetFromFolder, self).__init__()
+
         self.image_filenames = []
         for image_dir in image_dirs:
-            self.image_filenames.extend(join(image_dir, x) for x in listdir(image_dir) if is_image_file(x))
+            self.image_filenames.extend(join(image_dir, x) for x in sorted(listdir(image_dir)) if is_image_file(x))
         self.is_gray = is_gray
         self.random_scale = random_scale
         self.crop_size = crop_size
@@ -29,73 +34,118 @@ class DatasetFromFolder(data.Dataset):
         self.fliplr = fliplr
         self.fliptb = fliptb
         self.scale_factor = scale_factor
-        self.normalize = normalize
 
     def __getitem__(self, index):
-        input = load_img(self.image_filenames[index])
-        w = input.size[0]
-        h = input.size[1]
+        # load image
+        img = load_img(self.image_filenames[index])
 
+        # determine valid HR image size with scale factor
+        self.crop_size = calculate_valid_crop_size(self.crop_size, self.scale_factor)
+        hr_img_w = self.crop_size
+        hr_img_h = self.crop_size
+
+        # determine LR image size
+        lr_img_w = hr_img_w // self.scale_factor
+        lr_img_h = hr_img_h // self.scale_factor
+
+        # random scaling between [0.5, 1.0]
         if self.random_scale:
-            # random scaling between [0.5, 1.0]
             eps = 1e-3
             ratio = random.randint(5, 10) * 0.1
-            if w*ratio < self.crop_size:
-                ratio = self.crop_size / w + eps
-            if h*ratio < self.crop_size:
-                ratio = self.crop_size / h + eps
+            if hr_img_w * ratio < self.crop_size:
+                ratio = self.crop_size / hr_img_w + eps
+            if hr_img_h * ratio < self.crop_size:
+                ratio = self.crop_size / hr_img_h + eps
 
-            scale_w = int(w * ratio)
-            scale_h = int(h * ratio)
+            scale_w = int(hr_img_w * ratio)
+            scale_h = int(hr_img_h * ratio)
             transform = Scale((scale_w, scale_h), interpolation=Image.BICUBIC)
-            input = transform(input)
+            img = transform(img)
 
-        if self.crop_size is not None:
-            # random crop
-            transform = RandomCrop(self.crop_size)
-            input = transform(input)
+        # random crop
+        transform = RandomCrop(self.crop_size)
+        img = transform(img)
 
+        # random rotation between [90, 180, 270] degrees
         if self.rotate:
-            # random rotation between [90, 180, 270] degrees
             rv = random.randint(1, 3)
-            input = input.rotate(90*rv, expand=True)
+            img = img.rotate(90 * rv, expand=True)
 
+        # random horizontal flip
         if self.fliplr:
-            # random flip
             transform = RandomHorizontalFlip()
-            input = transform(input)
+            img = transform(img)
 
+        # random vertical flip
         if self.fliptb:
-            # random flip
             if random.random() < 0.5:
-                input = input.transpose(Image.FLIP_TOP_BOTTOM)
+                img = img.transpose(Image.FLIP_TOP_BOTTOM)
 
+        # only Y-channel is super-resolved
         if self.is_gray:
-            input = input.convert('YCbCr')
-            input, _, _ = input.split()
+            img = img.convert('YCbCr')
+            # img, _, _ = img.split()
 
-        target = input.copy()
+        # hr_img HR image
+        hr_transform = Compose([Scale((hr_img_w, hr_img_h), interpolation=Image.BICUBIC), ToTensor()])
+        hr_img = hr_transform(img)
 
-        if self.crop_size is not None:
-            scale_w = self.crop_size // self.scale_factor
-            scale_h = self.crop_size // self.scale_factor
-        else:
-            scale_w = w // self.scale_factor
-            scale_h = h // self.scale_factor
+        # lr_img LR image
+        lr_transform = Compose([Scale((lr_img_w, lr_img_h), interpolation=Image.BICUBIC), ToTensor()])
+        lr_img = lr_transform(img)
 
-        input_transform = Compose([Scale((scale_w, scale_h), interpolation=Image.BICUBIC), ToTensor()])
-        input = input_transform(input)
+        # Bicubic interpolated image
+        bc_transform = Compose([ToPILImage(), Scale((hr_img_w, hr_img_h), interpolation=Image.BICUBIC), ToTensor()])
+        bc_img = bc_transform(lr_img)
 
-        target_transform = ToTensor()
-        target = target_transform(target)
+        return lr_img, hr_img, bc_img
 
-        # normalize (-1, 1)
-        if self.normalize:
-            transform = Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
-            input = transform(input)
-            target = transform(target)
+    def __len__(self):
+        return len(self.image_filenames)
 
-        return input, target
+
+class TestDatasetFromFolder(data.Dataset):
+    def __init__(self, image_dir, is_gray=False, scale_factor=4):
+        super(TestDatasetFromFolder, self).__init__()
+
+        self.image_filenames = [join(image_dir, x) for x in sorted(listdir(image_dir)) if is_image_file(x)]
+        self.is_gray = is_gray
+        self.scale_factor = scale_factor
+
+    def __getitem__(self, index):
+        # load image
+        img = load_img(self.image_filenames[index])
+
+        # original HR image size
+        w = img.size[0]
+        h = img.size[1]
+
+        # determine valid HR image size with scale factor
+        hr_img_w = calculate_valid_crop_size(w, self.scale_factor)
+        hr_img_h = calculate_valid_crop_size(h, self.scale_factor)
+
+        # determine lr_img LR image size
+        lr_img_w = hr_img_w // self.scale_factor
+        lr_img_h = hr_img_h // self.scale_factor
+
+        # only Y-channel is super-resolved
+        if self.is_gray:
+            img = img.convert('YCbCr')
+            # img, _, _ = lr_img.split()
+
+        # hr_img HR image
+        hr_transform = Compose([Scale((hr_img_w, hr_img_h), interpolation=Image.BICUBIC), ToTensor()])
+        hr_img = hr_transform(img)
+
+        # lr_img LR image
+        lr_transform = Compose([Scale((lr_img_w, lr_img_h), interpolation=Image.BICUBIC), ToTensor()])
+        lr_img = lr_transform(img)
+
+        # Bicubic interpolated image
+        bc_transform = Compose([ToPILImage(), Scale((hr_img_w, hr_img_h), interpolation=Image.BICUBIC), ToTensor()])
+        bc_img = bc_transform(lr_img)
+
+        return lr_img, hr_img, bc_img
 
     def __len__(self):
         return len(self.image_filenames)
