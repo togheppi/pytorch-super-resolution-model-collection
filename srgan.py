@@ -15,18 +15,18 @@ class Generator(torch.nn.Module):
     def __init__(self, num_channels, base_filter, num_residuals):
         super(Generator, self).__init__()
 
-        self.input_conv = ConvBlock(num_channels, base_filter, 9, 1, 4, activation='lrelu', norm=None)
+        self.input_conv = ConvBlock(num_channels, base_filter, 9, 1, 4, activation='prelu', norm=None)
 
         resnet_blocks = []
         for _ in range(num_residuals):
-            resnet_blocks.append(ResnetBlock(base_filter, activation='lrelu'))
+            resnet_blocks.append(ResnetBlock(base_filter, activation='prelu'))
         self.residual_layers = nn.Sequential(*resnet_blocks)
 
         self.mid_conv = ConvBlock(base_filter, base_filter, 3, 1, 1, activation=None)
 
         self.upscale4x = nn.Sequential(
-            Upsample2xBlock(base_filter, base_filter, upsample='ps', activation='lrelu', norm=None),
-            Upsample2xBlock(base_filter, base_filter, upsample='ps', activation='lrelu', norm=None)
+            Upsample2xBlock(base_filter, base_filter, upsample='ps', activation='prelu', norm=None),
+            Upsample2xBlock(base_filter, base_filter, upsample='ps', activation='prelu', norm=None)
         )
 
         self.output_conv = ConvBlock(base_filter, num_channels, 9, 1, 4, activation=None, norm=None)
@@ -64,7 +64,8 @@ class Discriminator(torch.nn.Module):
         )
 
         self.dense_layers = nn.Sequential(
-            DenseBlock(base_filter * 8 * image_size // 16 * image_size // 16, base_filter * 16, activation='lrelu', norm=None),
+            DenseBlock(base_filter * 8 * image_size // 16 * image_size // 16, base_filter * 16, activation='lrelu',
+                       norm=None),
             DenseBlock(base_filter * 16, 1, activation='sigmoid', norm=None)
         )
 
@@ -83,7 +84,7 @@ class Discriminator(torch.nn.Module):
 class FeatureExtractor(torch.nn.Module):
     def __init__(self, netVGG, feature_layer=8):
         super(FeatureExtractor, self).__init__()
-        self.features = nn.Sequential(*list(netVGG.features.children())[:(feature_layer+1)])
+        self.features = nn.Sequential(*list(netVGG.features.children())[:(feature_layer + 1)])
 
     def forward(self, x):
         return self.features(x)
@@ -108,30 +109,28 @@ class SRGAN(object):
         self.save_dir = args.save_dir
         self.gpu_mode = args.gpu_mode
 
-    def load_dataset(self, dataset='train'):
+    def load_dataset(self, dataset, is_train=True):
         if self.num_channels == 1:
             is_gray = True
         else:
             is_gray = False
 
-        if dataset == 'train':
+        if is_train:
             print('Loading train datasets...')
-            train_set = get_training_set(self.data_dir, self.train_dataset, self.crop_size, self.scale_factor, is_gray=is_gray,
-                                         normalize=False)
+            train_set = get_training_set(self.data_dir, dataset, self.crop_size, self.scale_factor, is_gray=is_gray)
             return DataLoader(dataset=train_set, num_workers=self.num_threads, batch_size=self.batch_size,
                               shuffle=True)
-        elif dataset == 'test':
+        else:
             print('Loading test datasets...')
-            test_set = get_test_set(self.data_dir, self.test_dataset, self.scale_factor, is_gray=is_gray,
-                                    normalize=False)
+            test_set = get_test_set(self.data_dir, dataset, self.scale_factor, is_gray=is_gray)
             return DataLoader(dataset=test_set, num_workers=self.num_threads,
                               batch_size=self.test_batch_size,
                               shuffle=False)
 
     def train(self):
         # load dataset
-        train_data_loader = self.load_dataset(dataset='train')
-        test_data_loader = self.load_dataset(dataset='test')
+        train_data_loader = self.load_dataset(dataset=self.train_dataset, is_train=True)
+        test_data_loader = self.load_dataset(dataset=self.test_dataset[0], is_train=False)
 
         # networks
         self.G = Generator(num_channels=self.num_channels, base_filter=64, num_residuals=16)
@@ -146,8 +145,8 @@ class SRGAN(object):
 
         # optimizer
         self.G_optimizer = optim.Adam(self.G.parameters(), lr=self.lr, betas=(0.9, 0.999))
-        self.D_optimizer = optim.Adam(self.D.parameters(), lr=self.lr, betas=(0.9, 0.999))
-        # self.D_optimizer = optim.SGD(self.D.parameters(), lr=self.lr/100, momentum=0.9, nesterov=True)
+        # self.D_optimizer = optim.Adam(self.D.parameters(), lr=self.lr, betas=(0.9, 0.999))
+        self.D_optimizer = optim.SGD(self.D.parameters(), lr=self.lr/100, momentum=0.9, nesterov=True)
 
         # loss function
         if self.gpu_mode:
@@ -164,7 +163,7 @@ class SRGAN(object):
         utils.print_network(self.G)
         utils.print_network(self.D)
         print('----------------------------------------------')
-        
+
         # set the logger
         G_log_dir = os.path.join(self.save_dir, 'G_logs')
         if not os.path.exists(G_log_dir):
@@ -177,7 +176,7 @@ class SRGAN(object):
         D_logger = Logger(D_log_dir)
 
         ################# Pre-train generator #################
-        self.epoch_pretrain = 5
+        self.epoch_pretrain = 50
 
         # Load pre-trained parameters of generator
         if not self.load_model(is_pretrain=True):
@@ -185,14 +184,18 @@ class SRGAN(object):
             print('Pre-training is started.')
             self.G.train()
             for epoch in range(self.epoch_pretrain):
-                for iter, (input, target) in enumerate(train_data_loader):
+                for iter, (lr, hr, _) in enumerate(train_data_loader):
                     # input data (low resolution image)
-                    if self.gpu_mode:
-                        x_ = Variable(target.cuda())
-                        y_ = Variable(input.cuda())
+                    if self.num_channels == 1:
+                        x_ = Variable(utils.norm(hr[:, 0].unsqueeze(1), vgg=True))
+                        y_ = Variable(utils.norm(lr[:, 0].unsqueeze(1), vgg=True))
                     else:
-                        x_ = Variable(target)
-                        y_ = Variable(input)
+                        x_ = Variable(utils.norm(hr, vgg=True))
+                        y_ = Variable(utils.norm(lr, vgg=True))
+
+                    if self.gpu_mode:
+                        x_ = x_.cuda()
+                        y_ = y_.cuda()
 
                     # Train generator
                     self.G_optimizer.zero_grad()
@@ -223,9 +226,10 @@ class SRGAN(object):
         step = 0
 
         # test image
-        test_input, test_target = test_data_loader.dataset.__getitem__(2)
-        test_input = test_input.unsqueeze(0)
-        test_target = test_target.unsqueeze(0)
+        test_lr, test_hr, test_bc = test_data_loader.dataset.__getitem__(2)
+        test_lr = test_lr.unsqueeze(0)
+        test_hr = test_hr.unsqueeze(0)
+        test_bc = test_bc.unsqueeze(0)
 
         self.G.train()
         self.D.train()
@@ -242,19 +246,24 @@ class SRGAN(object):
 
             G_epoch_loss = 0
             D_epoch_loss = 0
-            for iter, (input, target) in enumerate(train_data_loader):
+            for iter, (lr, hr, _) in enumerate(train_data_loader):
                 # input data (low resolution image)
-                mini_batch = target.size()[0]
+                mini_batch = lr.size()[0]
+
+                if self.num_channels == 1:
+                    x_ = Variable(utils.norm(hr[:, 0].unsqueeze(1), vgg=True))
+                    y_ = Variable(utils.norm(lr[:, 0].unsqueeze(1), vgg=True))
+                else:
+                    x_ = Variable(utils.norm(hr, vgg=True))
+                    y_ = Variable(utils.norm(lr, vgg=True))
 
                 if self.gpu_mode:
-                    x_ = Variable(target.cuda())
-                    y_ = Variable(input.cuda())
+                    x_ = x_.cuda()
+                    y_ = y_.cuda()
                     # labels
                     real_label = Variable(torch.ones(mini_batch).cuda())
                     fake_label = Variable(torch.zeros(mini_batch).cuda())
                 else:
-                    x_ = Variable(target)
-                    y_ = Variable(input)
                     # labels
                     real_label = Variable(torch.ones(mini_batch))
                     fake_label = Variable(torch.zeros(mini_batch))
@@ -285,18 +294,18 @@ class SRGAN(object):
                 D_fake_decision = self.D(recon_image)
 
                 # Adversarial loss
-                GAN_loss = 0.001 * self.BCE_loss(D_fake_decision, real_label)
+                GAN_loss = self.BCE_loss(D_fake_decision, real_label)
 
                 # Content losses
                 mse_loss = self.MSE_loss(recon_image, x_)
-                x_VGG = Variable(utils.norm(target).cuda())
-                recon_VGG = Variable(utils.norm(recon_image.data).cuda())
+                x_VGG = Variable(utils.norm(hr, vgg=True).cuda())
+                recon_VGG = Variable(utils.norm(recon_image.data, vgg=True).cuda())
                 real_feature = self.feature_extractor(x_VGG)
                 fake_feature = self.feature_extractor(recon_VGG)
-                vgg_loss = 0.006 * self.MSE_loss(fake_feature, real_feature.detach())
+                vgg_loss = self.MSE_loss(fake_feature, real_feature.detach())
 
                 # Back propagation
-                G_loss = mse_loss + vgg_loss + GAN_loss
+                G_loss = mse_loss + 6e-3 * vgg_loss + 1e-3 * GAN_loss
                 G_loss.backward()
                 self.G_optimizer.step()
 
@@ -316,26 +325,44 @@ class SRGAN(object):
             D_avg_loss.append(D_epoch_loss / len(train_data_loader))
 
             # prediction
-            recon_imgs = self.G(Variable(test_input.cuda()))
-            recon_img = recon_imgs[0].cpu().data
-            gt_img = test_target[0]
-            lr_img = test_input[0]
-            bc_img = utils.img_interp(test_input[0], self.scale_factor)
+            if self.num_channels == 1:
+                y_ = Variable(utils.norm(test_lr[:, 0].unsqueeze(1), vgg=True))
+            else:
+                y_ = Variable(utils.norm(test_lr, vgg=True))
 
-            # calculate psnrs
-            bc_psnr = utils.PSNR(bc_img, gt_img)
-            recon_psnr = utils.PSNR(recon_img, gt_img)
+            if self.gpu_mode:
+                y_ = y_.cuda()
 
-            # save result images
-            result_imgs = [gt_img, lr_img, bc_img, recon_img]
-            psnrs = [None, None, bc_psnr, recon_psnr]
-            utils.plot_test_result(result_imgs, psnrs, epoch + 1, save_dir=self.save_dir, is_training=True)
+            recon_img = self.G(y_)
+            sr_img = utils.denorm(recon_img[0].cpu().data, vgg=True)
 
-            print("Saving training result images at epoch %d" % (epoch + 1))
+            # save result image
+            save_dir = os.path.join(self.save_dir, 'train_result')
+            utils.save_img(sr_img, epoch + 1, save_dir=save_dir, is_training=True)
+            print('Result image at epoch %d is saved.' % (epoch + 1))
 
             # Save trained parameters of model
             if (epoch + 1) % self.save_epochs == 0:
                 self.save_model(epoch + 1)
+
+        # calculate psnrs
+        if self.num_channels == 1:
+            gt_img = test_hr[0][0].unsqueeze(0)
+            lr_img = test_lr[0][0].unsqueeze(0)
+            bc_img = test_bc[0][0].unsqueeze(0)
+        else:
+            gt_img = test_hr[0]
+            lr_img = test_lr[0]
+            bc_img = test_bc[0]
+
+        bc_psnr = utils.PSNR(bc_img, gt_img)
+        recon_psnr = utils.PSNR(sr_img, gt_img)
+
+        # plot result images
+        result_imgs = [gt_img, lr_img, bc_img, sr_img]
+        psnrs = [None, None, bc_psnr, recon_psnr]
+        utils.plot_test_result(result_imgs, psnrs, self.num_epochs, save_dir=save_dir, is_training=True)
+        print('Training result image is saved.')
 
         # Plot avg. loss
         utils.plot_loss([G_avg_loss, D_avg_loss], self.num_epochs, save_dir=self.save_dir)
@@ -354,39 +381,56 @@ class SRGAN(object):
         # load model
         self.load_model()
 
-        # load datasset
-        test_data_loader = self.load_dataset(dataset='test')
+        # load dataset
+        for test_dataset in self.test_dataset:
+            test_data_loader = self.load_dataset(dataset=test_dataset, is_train=False)
 
-        # Test
-        print('Test is started.')
-        img_num = 0
-        self.G.eval()
-        for input, target in test_data_loader:
-            # input data (low resolution image)
-            if self.gpu_mode:
-                y_ = Variable(input.cuda())
-            else:
-                y_ = Variable(input)
+            # Test
+            print('Test is started.')
+            img_num = 0
+            total_img_num = len(test_data_loader)
+            self.G.eval()
+            for lr, hr, bc in test_data_loader:
+                # input data (low resolution image)
+                if self.num_channels == 1:
+                    y_ = Variable(utils.norm(lr[:, 0].unsqueeze(1), vgg=True))
+                else:
+                    y_ = Variable(utils.norm(lr, vgg=True))
 
-            # prediction
-            recon_imgs = self.G(y_)
-            for i, recon_img in enumerate(recon_imgs):
-                img_num += 1
-                recon_img = recon_imgs[i].cpu().data
-                gt_img = target[i]
-                lr_img = input[i]
-                bc_img = utils.img_interp(input[i], self.scale_factor)
+                if self.gpu_mode:
+                    y_ = y_.cuda()
 
-                # calculate psnrs
-                bc_psnr = utils.PSNR(bc_img, gt_img)
-                recon_psnr = utils.PSNR(recon_img, gt_img)
+                # prediction
+                recon_imgs = self.G(y_)
+                for i, recon_img in enumerate(recon_imgs):
+                    img_num += 1
+                    sr_img = utils.denorm(recon_img.cpu().data, vgg=True)
 
-                # save result images
-                result_imgs = [gt_img, lr_img, bc_img, recon_img]
-                psnrs = [None, None, bc_psnr, recon_psnr]
-                utils.plot_test_result(result_imgs, psnrs, img_num, save_dir=self.save_dir)
+                    # save result image
+                    save_dir = os.path.join(self.save_dir, 'test_result', test_dataset)
+                    utils.save_img(sr_img, img_num, save_dir=save_dir)
 
-                print("Saving %d test result images..." % img_num)
+                    # calculate psnrs
+                    if self.num_channels == 1:
+                        gt_img = hr[i][0].unsqueeze(0)
+                        lr_img = lr[i][0].unsqueeze(0)
+                        bc_img = bc[i][0].unsqueeze(0)
+                    else:
+                        gt_img = hr[i]
+                        lr_img = lr[i]
+                        bc_img = bc[i]
+
+                    bc_psnr = utils.PSNR(bc_img, gt_img)
+                    recon_psnr = utils.PSNR(sr_img, gt_img)
+
+                    # plot result images
+                    result_imgs = [gt_img, lr_img, bc_img, sr_img]
+                    psnrs = [None, None, bc_psnr, recon_psnr]
+                    utils.plot_test_result(result_imgs, psnrs, img_num, save_dir=save_dir)
+
+                    print('Test DB: %s, Saving result images...[%d/%d]' % (test_dataset, img_num, total_img_num))
+
+            print('Test is finishied.')
 
     def test_single(self, img_fn):
         # networks
@@ -399,37 +443,42 @@ class SRGAN(object):
         self.load_model()
 
         # load data
-        img = Image.open(img_fn)
-        img = img.convert('YCbCr')
-        y, cb, cr = img.split()
+        img = Image.open(img_fn).convert('RGB')
 
-        input = Variable(ToTensor()(y)).view(1, -1, y.size[1], y.size[0])
+        if self.num_channels == 1:
+            img = img.convert('YCbCr')
+            img_y, img_cb, img_cr = img.split()
+
+            input = ToTensor()(img_y)
+            y_ = Variable(utils.norm(input.unsqueeze(1), vgg=True))
+        else:
+            input = ToTensor()(img).view(1, -1, img.height, img.width)
+            y_ = Variable(utils.norm(input, vgg=True))
+
         if self.gpu_mode:
-            input = input.cuda()
+            y_ = y_.cuda()
 
+        # prediction
         self.G.eval()
-        recon_img = self.G(input)
+        recon_img = self.G(y_)
+        recon_img = utils.denorm(recon_img.cpu().data[0].clamp(0, 1), vgg=True)
+        recon_img = ToPILImage()(recon_img)
 
-        # save result images
-        utils.save_img(recon_img.cpu().data, 1, save_dir=self.save_dir)
-
-        out = recon_img.cpu()
-        out_img_y = out.data[0]
-        out_img_y = (((out_img_y - out_img_y.min()) * 255) / (out_img_y.max() - out_img_y.min())).numpy()
-        # out_img_y *= 255.0
-        # out_img_y = out_img_y.clip(0, 255)
-        out_img_y = Image.fromarray(np.uint8(out_img_y[0]), mode='L')
-
-        out_img_cb = cb.resize(out_img_y.size, Image.BICUBIC)
-        out_img_cr = cr.resize(out_img_y.size, Image.BICUBIC)
-        out_img = Image.merge('YCbCr', [out_img_y, out_img_cb, out_img_cr]).convert('RGB')
+        if self.num_channels == 1:
+            # merge color channels with super-resolved Y-channel
+            recon_y = recon_img
+            recon_cb = img_cb.resize(recon_y.size, Image.BICUBIC)
+            recon_cr = img_cr.resize(recon_y.size, Image.BICUBIC)
+            recon_img = Image.merge('YCbCr', [recon_y, recon_cb, recon_cr]).convert('RGB')
 
         # save img
-        result_dir = os.path.join(self.save_dir, 'result')
+        result_dir = os.path.join(self.save_dir, 'test_result')
         if not os.path.exists(result_dir):
-            os.mkdir(result_dir)
+            os.makedirs(result_dir)
         save_fn = result_dir + '/SR_result.png'
-        out_img.save(save_fn)
+        recon_img.save(save_fn)
+
+        print('Single test result image is saved.')
 
     def save_model(self, epoch=None, is_pretrain=False):
         model_dir = os.path.join(self.save_dir, 'model')
@@ -441,11 +490,19 @@ class SRGAN(object):
             print('Pre-trained generator model is saved.')
         else:
             if epoch is not None:
-                torch.save(self.G.state_dict(), model_dir + '/' + self.model_name + '_G_param_epoch_%d.pkl' % epoch)
-                torch.save(self.D.state_dict(), model_dir + '/' + self.model_name + '_D_param_epoch_%d.pkl' % epoch)
+                torch.save(self.G.state_dict(), model_dir + '/' + self.model_name +
+                           '_G_param_ch%d_batch%d_epoch%d_lr%.g.pkl'
+                           % (self.num_channels, self.batch_size, epoch, self.lr))
+                torch.save(self.D.state_dict(), model_dir + '/' + self.model_name +
+                           '_D_param_ch%d_batch%d_epoch%d_lr%.g.pkl'
+                           % (self.num_channels, self.batch_size, epoch, self.lr))
             else:
-                torch.save(self.G.state_dict(), model_dir + '/' + self.model_name + '_G_param.pkl')
-                torch.save(self.D.state_dict(), model_dir + '/' + self.model_name + '_D_param.pkl')
+                torch.save(self.G.state_dict(), model_dir + '/' + self.model_name +
+                           '_G_param_ch%d_batch%d_epoch%d_lr%.g.pkl'
+                           % (self.num_channels, self.batch_size, self.num_epochs, self.lr))
+                torch.save(self.D.state_dict(), model_dir + '/' + self.model_name +
+                           '_D_param_ch%d_batch%d_epoch%d_lr%.g.pkl'
+                           % (self.num_channels, self.batch_size, self.num_epochs, self.lr))
             print('Trained models are saved.')
 
     def load_model(self, is_pretrain=False):
@@ -458,7 +515,9 @@ class SRGAN(object):
                 print('Pre-trained generator model is loaded.')
                 return True
         else:
-            model_name = model_dir + '/' + self.model_name + '_G_param.pkl'
+            model_name = model_dir + '/' + self.model_name + \
+                         '_G_param_ch%d_batch%d_epoch%d_lr%.g.pkl' \
+                         % (self.num_channels, self.batch_size, self.num_epochs, self.lr)
             if os.path.exists(model_name):
                 self.G.load_state_dict(torch.load(model_name))
                 print('Trained generator model is loaded.')

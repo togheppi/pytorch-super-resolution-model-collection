@@ -118,7 +118,7 @@ class DRCN(object):
         param_groups = list(self.model.parameters())
         param_groups = [{'params': param_groups}]
         param_groups += [{'params': [self.model.w]}]
-        self.optimizer = optim.SGD(param_groups, lr=self.lr, momentum=self.momentum, weight_decay=self.weight_decay)
+        self.optimizer = optim.Adam(param_groups, lr=self.lr)
 
         # loss function
         if self.gpu_mode:

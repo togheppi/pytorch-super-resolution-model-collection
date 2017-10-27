@@ -170,7 +170,7 @@ class LapSRN(object):
         for epoch in range(self.num_epochs):
 
             # learning rate is decayed by a factor of 10 every 10 epochs
-            if (epoch+1) % 10 == 0:
+            if (epoch+1) % 100 == 0:
                 for param_group in self.optimizer.param_groups:
                     param_group["lr"] /= 10.0
                 print("Learning rate decay: lr={}".format(self.optimizer.param_groups[0]["lr"]))
