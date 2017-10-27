@@ -13,24 +13,24 @@ from lapsrn import LapSRN
 def parse_args():
     desc = "PyTorch implementation of SR collections"
     parser = argparse.ArgumentParser(description=desc)
-    parser.add_argument('--model_name', type=str, default='EDSR',
+    parser.add_argument('--model_name', type=str, default='SRGAN',
                         choices=['SRCNN', 'VDSR', 'DRCN', 'ESPCN', 'FastNeuralStyle', 'FSRCNN', 'SRGAN', 'LapSRN',
                                  'EnhanceNet', 'EDSR', 'EnhanceGAN'], help='The type of model')
     parser.add_argument('--data_dir', type=str, default='../Data')
-    parser.add_argument('--train_dataset', type=list, default=['bsds300', 'General100', 'T91'], choices=['bsds300', 'General100', 'T91'],
+    parser.add_argument('--train_dataset', type=list, default=['DIV2K'], choices=['bsds300', 'General100', 'T91'],
                         help='The name of training dataset')
     parser.add_argument('--test_dataset', type=list, default=['Set5', 'Set14', 'Urban100'], choices=['Set5', 'Set14', 'Urban100'],
                         help='The name of test dataset')
     parser.add_argument('--crop_size', type=int, default=128, help='Size of cropped HR image')
     parser.add_argument('--num_threads', type=int, default=4, help='number of threads for data loader to use')
-    parser.add_argument('--num_channels', type=int, default=1, help='The number of channels to super-resolve')
+    parser.add_argument('--num_channels', type=int, default=3, help='The number of channels to super-resolve')
     parser.add_argument('--scale_factor', type=int, default=4, help='Size of scale factor')
     parser.add_argument('--num_epochs', type=int, default=100, help='The number of epochs to run')
     parser.add_argument('--save_epochs', type=int, default=10, help='Save trained model every this epochs')
-    parser.add_argument('--batch_size', type=int, default=64, help='training batch size')
+    parser.add_argument('--batch_size', type=int, default=16, help='training batch size')
     parser.add_argument('--test_batch_size', type=int, default=1, help='testing batch size')
-    parser.add_argument('--save_dir', type=str, default='Result', help='Directory name to save the results')
-    parser.add_argument('--lr', type=float, default=0.0001)
+    parser.add_argument('--save_dir', type=str, default='Result_DIV2K', help='Directory name to save the results')
+    parser.add_argument('--lr', type=float, default=0.00001)
     parser.add_argument('--gpu_mode', type=bool, default=True)
 
     return check_args(parser.parse_args())
@@ -93,7 +93,7 @@ def main():
         raise Exception("[!] There is no option for " + args.model_name)
 
     # train
-    # net.train()
+    net.train()
 
     # test
     net.test()
